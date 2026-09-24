@@ -1,0 +1,19 @@
+{
+  "name": "minisgl-viz-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "check:scenario": "esbuild src/lib/simulator.ts --bundle --format=esm --outfile=.tmp/simulator.mjs --log-level=error && node tools/check-scenario.mjs",
+    "check:views": "esbuild src/views/overview.ts src/views/callgraph.ts src/views/datastructs.ts src/views/sequence.ts src/views/simulator.ts src/views/source.ts --bundle --format=esm --outdir=.tmp/views --log-level=error && node tools/check-views.mjs"
+  },
+  "devDependencies": {
+    "jsdom": "^29.1.1",
+    "typescript": "^5.6.3",
+    "vite": "^7.0.0"
+  }
+}

@@ -1,0 +1,20 @@
+# 构建产物
+backend/target/
+frontend/dist/
+frontend/.tmp/
+
+# 依赖
+frontend/node_modules/
+.venv/
+
+# Python 参考实现留下的缓存
+__pycache__/
+*.py[cod]
+
+# 编辑器与系统
+.idea/
+.vscode/
+.DS_Store
+
+# 日志与临时文件
+*.log

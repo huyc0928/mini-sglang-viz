@@ -1,0 +1,1445 @@
+{
+ "module_notes": {
+  "core": {
+   "role": "全局上下文与最基础的数据结构。所有层通过 get_global_ctx() 拿到当前批次、页表和 KV 池。",
+   "entry": "core.py",
+   "key_symbols": [
+    "minisgl.core.Req",
+    "minisgl.core.Batch",
+    "minisgl.core.Context",
+    "minisgl.core.SamplingParams",
+    "minisgl.core.get_global_ctx"
+   ],
+   "notes": [
+    "Req 用三个长度字段描述一条请求走到哪一步：cached_len（已进缓存的 token 数）、device_len（当前要算到的位置）、max_device_len（输入长度加最大输出）。",
+    "Batch 只带 reqs 和 phase，其余字段由调度器与 attention 后端填充，这样模型层不需要知道调度细节。",
+    "Context 里的 page_table 注释写明「始终按 page_size = 1 存储」——表里放的是 token 级 KV 位置，不是页号。"
+   ]
+  },
+  "env": {
+   "role": "把环境变量读成带默认值的单例，前缀 MINISGL_。",
+   "entry": "env.py",
+   "key_symbols": [
+    "minisgl.env.EnvClassSingleton",
+    "minisgl.env.EnvVar"
+   ],
+   "notes": [
+    "关闭 overlap 调度只需设 MINISGL_DISABLE_OVERLAP_SCHEDULING=1，对照实验常用。"
+   ]
+  },
+  "shell": {
+   "role": "交互式 shell 入口，等价于 launch_server(run_shell=True)。",
+   "entry": "shell.py",
+   "key_symbols": [],
+   "notes": [
+    "shell 模式会把 cuda_graph_max_bs 和 max_running_req 压到 1，省显存。"
+   ]
+  },
+  "attention": {
+   "role": "attention 后端：把 q/k/v 与分页 KV 交给 FlashAttention、FlashInfer 或 TensorRT-LLM。",
+   "entry": "attention/",
+   "key_symbols": [
+    "minisgl.attention.base.HybridBackend.forward",
+    "minisgl.attention.fa.FlashAttentionBackend.forward",
+    "minisgl.attention.fi.FlashInferBackend.forward",
+    "minisgl.attention.trtllm.TensorRTLLMBackend.forward",
+    "minisgl.attention.create_attention_backend"
+   ],
+   "notes": [
+    "HybridBackend 允许 prefill 与 decode 用不同后端，命令行写 --attn fa,fi 即可。",
+    "auto 选择的规则在 engine._adjust_config：sm100 用 trtllm，sm90 用 fa,fi，其余用 fi。",
+    "三个后端的差别集中在元数据准备：flashinfer 要求 page_size = 1，trtllm 要求 16/32/64。"
+   ]
+  },
+  "distributed": {
+   "role": "张量并行的规模信息与通信实现切换。",
+   "entry": "distributed/",
+   "key_symbols": [
+    "minisgl.distributed.impl.DistributedCommunicator",
+    "minisgl.distributed.impl.enable_pynccl_distributed",
+    "minisgl.distributed.info.get_tp_info"
+   ],
+   "notes": [
+    "通信实现是一摞插件，默认 torch.distributed，开了 pynccl 之后栈顶换成内核里的 NCCL 封装。"
+   ]
+  },
+  "engine": {
+   "role": "模型执行层：建模型、开 KV 池、跑前向、采样、管 CUDA Graph。",
+   "entry": "engine/",
+   "key_symbols": [
+    "minisgl.engine.engine.Engine.__init__",
+    "minisgl.engine.engine.Engine.forward_batch",
+    "minisgl.engine.engine.Engine._determine_num_pages",
+    "minisgl.engine.graph.GraphRunner._capture_graphs",
+    "minisgl.engine.graph.GraphRunner.replay",
+    "minisgl.engine.sample.Sampler.sample"
+   ],
+   "notes": [
+    "Engine.__init__ 的顺序值得按顺序读一遍：先建 Context 与通信，再在 meta 设备上搭模型、加载权重，最后按剩余显存算页数并开 KV 池。",
+    "forward_batch 里能开 CUDA Graph 就走 replay，否则走 eager，两条路都写 logits，后续逻辑不分叉。",
+    "req.complete_one() 在采样之前调用，所以 device_len 先自增，采样结果在下一轮才回写。"
+   ]
+  },
+  "kernel": {
+   "role": "Triton 与 CUDA 算子，以及算子的编译加载。",
+   "entry": "kernel/",
+   "key_symbols": [
+    "minisgl.kernel.index.indexing",
+    "minisgl.kernel.store.store_cache",
+    "minisgl.kernel.radix.fast_compare_key",
+    "minisgl.kernel.pynccl.init_pynccl",
+    "minisgl.kernel.utils.load_jit",
+    "minisgl.kernel.utils.load_aot"
+   ],
+   "notes": [
+    "算子走 tvm_ffi：C++/CUDA 在 csrc 下，jit 目录现场编译，src 目录预编译成库。",
+    "indexing 做词嵌入查表并按 tp 切分做 vocab_range 掩码；store_cache 把这一步的 K/V 散射进分页缓存；fast_compare_key 是纯 CPU 的整数前缀比较，给 Radix 树用。"
+   ]
+  },
+  "kvcache": {
+   "role": "KV 池与前缀缓存两套实现。",
+   "entry": "kvcache/",
+   "key_symbols": [
+    "minisgl.kvcache.mha_pool.MHAKVCache.__init__",
+    "minisgl.kvcache.mha_pool.MHAKVCache.store_kv",
+    "minisgl.kvcache.radix_cache.RadixPrefixCache._tree_walk",
+    "minisgl.kvcache.radix_cache.RadixTreeNode.split_at",
+    "minisgl.kvcache.radix_cache.RadixPrefixCache.evict",
+    "minisgl.kvcache.naive_cache.NaivePrefixCache"
+   ],
+   "notes": [
+    "MHAKVCache 是一整块 (2, num_layers, num_pages, page_size, local_kv_heads, head_dim) 的显存，第 0 维切开分别是 K 和 V。",
+    "naive 前缀缓存什么都不做，用来做对照实验：--cache naive。",
+    "Radix 树的节点存的是 token 片段与对应的 KV 位置，ref_count 大于 0 的节点在 protected_size 里，不会被淘汰。"
+   ]
+  },
+  "layers": {
+   "role": "Transformer 的积木：并行线性层、RMSNorm、RoPE、词嵌入、激活。",
+   "entry": "layers/",
+   "key_symbols": [
+    "minisgl.layers.base.BaseOP",
+    "minisgl.layers.base.OPList",
+    "minisgl.layers.linear.LinearQKVMerged",
+    "minisgl.layers.linear.LinearRowParallel",
+    "minisgl.layers.norm.RMSNormFused",
+    "minisgl.layers.rotary.RotaryEmbedding",
+    "minisgl.layers.embedding.VocabParallelEmbedding",
+    "minisgl.layers.embedding.ParallelLMHead",
+    "minisgl.layers.attention.AttentionLayer"
+   ],
+   "notes": [
+    "这里没有 torch.nn.Module。BaseOP 自己走 __dict__ 递归实现 state_dict 与 load_state_dict，权重的 tp 切分在加载时就完成。",
+    "列并行切开输出维（qkv、gate_up），行并行切开输入维（o_proj、down_proj）并在 forward 里做 all_reduce。",
+    "RMSNormFused 返回 (x, residual) 二元组，残差是就地累加的，这是为了少一次读写。"
+   ]
+  },
+  "llm": {
+   "role": "离线单进程推理入口，不起服务、不走 ZMQ。",
+   "entry": "llm/",
+   "key_symbols": [
+    "minisgl.llm.llm.LLM.__init__",
+    "minisgl.llm.llm.LLM.generate",
+    "minisgl.llm.llm.LLM.offline_receive_msg",
+    "minisgl.llm.llm.LLM.offline_send_result"
+   ],
+   "notes": [
+    "LLM 继承 Scheduler，靠 offline_mode=True 把收发消息换成读写内存队列。",
+    "读它的顺序是：先看 __init__ 怎么跳过 ZMQ，再看 generate 怎么把请求塞进 pending_requests 并等 run_forever 抛 RequestAllFinished。"
+   ]
+  },
+  "message": {
+   "role": "跨进程消息定义与序列化。",
+   "entry": "message/",
+   "key_symbols": [
+    "minisgl.message.backend.UserMsg",
+    "minisgl.message.backend.AbortBackendMsg",
+    "minisgl.message.frontend.UserReply",
+    "minisgl.message.tokenizer.TokenizeMsg",
+    "minisgl.message.tokenizer.DetokenizeMsg",
+    "minisgl.message.utils.serialize_type"
+   ],
+   "notes": [
+    "msgpack 序列化，一维 torch.Tensor 单独编码成 buffer + dtype，其余类型按 __type__ 标记递归处理。"
+   ]
+  },
+  "models": {
+   "role": "模型结构与权重加载，支持 Llama、Qwen2、Qwen3、Qwen3-MoE、Mistral。",
+   "entry": "models/",
+   "key_symbols": [
+    "minisgl.models.qwen3.Qwen3ForCausalLM.forward",
+    "minisgl.models.qwen3.Qwen3DecoderLayer.forward",
+    "minisgl.models.utils.RopeAttn.forward",
+    "minisgl.models.utils.GatedMLP.forward",
+    "minisgl.models.weight.load_weight",
+    "minisgl.models.create_model"
+   ],
+   "notes": [
+    "五种模型共用同一套层骨架，差别只在 attention 的开关（是否 qk norm、是否有 bias）和 MLP 用稠密还是 MoE。",
+    "load_weight 是个流式生成器：边读 safetensors 边按 tp 切分、边把 q/k/v/gate/up 合并成融合权重，所以显存里不会同时存在两份。"
+   ]
+  },
+  "moe": {
+   "role": "MoE 后端，目前只有 Triton 融合实现。",
+   "entry": "moe/",
+   "key_symbols": [
+    "minisgl.moe.fused.FusedMoe",
+    "minisgl.moe.base.BaseMoeBackend"
+   ],
+   "notes": [
+    "路由与专家计算分别在 fused_topk、moe_align_block_size、fused_moe_kernel、moe_sum_reduce_kernel 里，最后做一次 all_reduce 合并各 rank 的部分和。"
+   ]
+  },
+  "scheduler": {
+   "role": "调度主循环与四张资源表：请求槽位、页、运行中请求、待入队请求。",
+   "entry": "scheduler/",
+   "key_symbols": [
+    "minisgl.scheduler.scheduler.Scheduler.__init__",
+    "minisgl.scheduler.scheduler.Scheduler.run_forever",
+    "minisgl.scheduler.scheduler.Scheduler.overlap_loop",
+    "minisgl.scheduler.scheduler.Scheduler._schedule_next_batch",
+    "minisgl.scheduler.scheduler.Scheduler._prepare_batch",
+    "minisgl.scheduler.scheduler.Scheduler._forward",
+    "minisgl.scheduler.scheduler.Scheduler._process_last_data",
+    "minisgl.scheduler.prefill.PrefillManager.schedule_next_batch",
+    "minisgl.scheduler.decode.DecodeManager.schedule_next_batch",
+    "minisgl.scheduler.cache.CacheManager.allocate_paged",
+    "minisgl.scheduler.table.TableManager.allocate"
+   ],
+   "notes": [
+    "调度策略是 prefill 优先：_schedule_next_batch 先问 prefill，拿不到才问 decode，一轮只发一个批次。",
+    "overlap_loop 是理解全篇的关键：它在本轮把批次交给 GPU 之后，立刻去处理上一轮的结果，用 GPU 的计算时间盖住 CPU 的处理时间。",
+    "PrefillAdder 的预算有两个：token_budget（这一步最多放进多少 token）和 reserved_size（给在跑的 decode 预留的空间）。"
+   ]
+  },
+  "server": {
+   "role": "HTTP 服务与进程拉起。",
+   "entry": "server/",
+   "key_symbols": [
+    "minisgl.server.launch.launch_server",
+    "minisgl.server.api_server.run_api_server",
+    "minisgl.server.api_server.generate",
+    "minisgl.server.api_server.v1_completions",
+    "minisgl.server.api_server.FrontendManager.stream_with_cancellation"
+   ],
+   "notes": [
+    "启动时按 tp_size 拉起同等数量的调度进程，再加一个 detokenizer 与若干 tokenizer 进程。",
+    "客户端断开靠 stream_with_cancellation 轮询 is_disconnected 发现，转成 AbortMsg 送到调度器释放资源。"
+   ]
+  },
+  "tokenizer": {
+   "role": "分词与增量解码。",
+   "entry": "tokenizer/",
+   "key_symbols": [
+    "minisgl.tokenizer.server.tokenize_worker",
+    "minisgl.tokenizer.tokenize.TokenizeManager",
+    "minisgl.tokenizer.detokenize.DetokenizeManager"
+   ],
+   "notes": [
+    "增量解码要处理 UTF-8 边界与中文，find_printable_text 决定这一轮能安全吐出多少字符。"
+   ]
+  },
+  "utils": {
+   "role": "通用工具：ZMQ 队列封装、注册表、日志、架构判断。",
+   "entry": "utils/",
+   "key_symbols": [
+    "minisgl.utils.mp.ZmqPushQueue",
+    "minisgl.utils.mp.ZmqAsyncPullQueue",
+    "minisgl.utils.registry.Registry",
+    "minisgl.utils.arch.is_sm90_supported",
+    "minisgl.utils.misc.div_even"
+   ],
+   "notes": [
+    "div_even 在切不动时对 KV 头做复制而不是报错，这是 GQA 配 tp 的常见处理方式。"
+   ]
+  },
+  "benchmark": {
+   "role": "压测工具与指标统计。",
+   "entry": "benchmark/",
+   "key_symbols": [
+    "minisgl.benchmark.client.BenchmarkResult"
+   ],
+   "notes": [
+    "offline 与 online 两套脚本，online 走 OpenAI 兼容接口，统计 TTFT 与 TPOT。"
+   ]
+  }
+ },
+ "reading_order": [
+  {
+   "title": "第一遍：一次请求的全貌",
+   "goal": "不纠结细节，先把 HTTP 到吐字的路径连起来。",
+   "steps": [
+    {
+     "label": "读 server/api_server.py 的三个路由与 FrontendManager",
+     "symbol": "minisgl.server.api_server.FrontendManager.send_one",
+     "hint": "看清请求怎么变成 TokenizeMsg"
+    },
+    {
+     "label": "读 server/launch.py 的进程分工",
+     "symbol": "minisgl.server.launch.launch_server",
+     "hint": "数清楚有几类进程、几条 ZMQ 通道"
+    },
+    {
+     "label": "读 scheduler/io.py 的收发",
+     "symbol": "minisgl.scheduler.io.SchedulerIOMixin.__init__",
+     "hint": "单 rank 与多 rank 的收发是两套函数"
+    },
+    {
+     "label": "读 scheduler 主循环",
+     "symbol": "minisgl.scheduler.scheduler.Scheduler.run_forever"
+    },
+    {
+     "label": "读 engine 前向与采样",
+     "symbol": "minisgl.engine.engine.Engine.forward_batch"
+    }
+   ]
+  },
+  {
+   "title": "第二遍：调度与显存",
+   "goal": "搞清一轮批次是怎么凑出来的，显存页是怎么分配与回收的。",
+   "steps": [
+    {
+     "label": "读 Req / Batch / Context",
+     "symbol": "minisgl.core.Req"
+    },
+    {
+     "label": "读 prefill 准入与切块",
+     "symbol": "minisgl.scheduler.prefill.PrefillAdder.try_add_one"
+    },
+    {
+     "label": "读页分配",
+     "symbol": "minisgl.scheduler.cache.CacheManager.allocate_paged"
+    },
+    {
+     "label": "读页表写入",
+     "symbol": "minisgl.scheduler.cache._write_page_table"
+    },
+    {
+     "label": "读上一批结果的处理与释放",
+     "symbol": "minisgl.scheduler.scheduler.Scheduler._process_last_data"
+    }
+   ]
+  },
+  {
+   "title": "第三遍：前缀缓存与 Radix 树",
+   "goal": "把树结构与引用计数读懂，这是阶段 D 的重点。",
+   "steps": [
+    {
+     "label": "读节点结构",
+     "symbol": "minisgl.kvcache.radix_cache.RadixTreeNode"
+    },
+    {
+     "label": "读匹配与分裂",
+     "symbol": "minisgl.kvcache.radix_cache.RadixPrefixCache._tree_walk",
+     "hint": "注意部分命中时 split_at 做了什么"
+    },
+    {
+     "label": "读插入",
+     "symbol": "minisgl.kvcache.radix_cache.RadixPrefixCache.insert_prefix"
+    },
+    {
+     "label": "读淘汰",
+     "symbol": "minisgl.kvcache.radix_cache.RadixPrefixCache.evict",
+     "hint": "按 timestamp 淘汰叶子节点"
+    },
+    {
+     "label": "读加解锁",
+     "symbol": "minisgl.kvcache.radix_cache.RadixPrefixCache.lock_handle",
+     "hint": "ref_count 如何影响可淘汰量"
+    }
+   ]
+  },
+  {
+   "title": "第四遍：模型前向与张量并行",
+   "goal": "从 logits 一路看到 q/k/v，再看到权重怎么切。",
+   "steps": [
+    {
+     "label": "读模型类层次",
+     "symbol": "minisgl.models.qwen3.Qwen3ForCausalLM.forward"
+    },
+    {
+     "label": "读解码层",
+     "symbol": "minisgl.models.qwen3.Qwen3DecoderLayer.forward"
+    },
+    {
+     "label": "读 attention 层胶水",
+     "symbol": "minisgl.layers.attention.AttentionLayer.forward"
+    },
+    {
+     "label": "读后端分发",
+     "symbol": "minisgl.attention.base.HybridBackend.forward"
+    },
+    {
+     "label": "读权重加载与切分",
+     "symbol": "minisgl.models.weight.load_weight"
+    }
+   ]
+  },
+  {
+   "title": "第五遍：性能手段",
+   "goal": "CUDA Graph、overlap 调度、kernel 各自省了什么。",
+   "steps": [
+    {
+     "label": "读 CUDA Graph 捕获",
+     "symbol": "minisgl.engine.graph.GraphRunner._capture_graphs"
+    },
+    {
+     "label": "读回放与批次填充",
+     "symbol": "minisgl.engine.graph.GraphRunner.replay"
+    },
+    {
+     "label": "读 overlap 调度",
+     "symbol": "minisgl.scheduler.scheduler.Scheduler.overlap_loop"
+    },
+    {
+     "label": "读算子清单",
+     "hint": "在 kernel 视图里对照 index / store / pynccl / fused_moe"
+    }
+   ]
+  },
+  {
+   "title": "第六遍：离线入口与服务化细节",
+   "goal": "最短路径跑通推理，再看服务侧的边角。",
+   "steps": [
+    {
+     "label": "读离线入口",
+     "symbol": "minisgl.llm.llm.LLM.generate"
+    },
+    {
+     "label": "读 tokenizer 工作进程",
+     "symbol": "minisgl.tokenizer.server.tokenize_worker"
+    },
+    {
+     "label": "读增量解码",
+     "symbol": "minisgl.tokenizer.detokenize.DetokenizeManager"
+    },
+    {
+     "label": "读取消传播",
+     "symbol": "minisgl.server.api_server.FrontendManager.stream_with_cancellation"
+    }
+   ]
+  }
+ ],
+ "process_topology": {
+  "nodes": [
+   {
+    "id": "client",
+    "label": "客户端",
+    "kind": "external",
+    "note": "OpenAI SDK 或 curl"
+   },
+   {
+    "id": "api",
+    "label": "API Server\nFastAPI + uvicorn",
+    "kind": "process",
+    "note": "server/api_server.py",
+    "symbol": "minisgl.server.api_server.run_api_server"
+   },
+   {
+    "id": "frontend_mgr",
+    "label": "FrontendManager\n连接管理 + SSE",
+    "kind": "component",
+    "note": "uid 分配、流式分帧、取消检测",
+    "symbol": "minisgl.server.api_server.FrontendManager"
+   },
+   {
+    "id": "tokenizer",
+    "label": "tokenize worker ×N",
+    "kind": "process",
+    "note": "server/args.py --num-tokenizer，0 表示与 detokenizer 合并",
+    "symbol": "minisgl.tokenizer.server.tokenize_worker"
+   },
+   {
+    "id": "detokenizer",
+    "label": "detokenizer worker",
+    "kind": "process",
+    "note": "增量解码，处理 UTF-8 边界",
+    "symbol": "minisgl.tokenizer.detokenize.DetokenizeManager"
+   },
+   {
+    "id": "sched0",
+    "label": "Scheduler rank0\n（同时是 Engine）",
+    "kind": "process",
+    "note": "每个 TP rank 一个进程",
+    "symbol": "minisgl.scheduler.scheduler.Scheduler.run_forever"
+   },
+   {
+    "id": "schedN",
+    "label": "Scheduler rank1..N-1",
+    "kind": "process",
+    "note": "只做调度与前向，不直接收用户消息",
+    "symbol": "minisgl.scheduler.io.SchedulerIOMixin._recv_msg_multi_rank1"
+   },
+   {
+    "id": "engine",
+    "label": "Engine\n模型 + KV 池 + 采样",
+    "kind": "component",
+    "note": "在 Scheduler 进程内",
+    "symbol": "minisgl.engine.engine.Engine.__init__"
+   }
+  ],
+  "links": [
+   {
+    "from": "client",
+    "to": "api",
+    "label": "HTTP / SSE",
+    "kind": "http"
+   },
+   {
+    "from": "api",
+    "to": "frontend_mgr",
+    "label": "进程内调用",
+    "kind": "inproc"
+   },
+   {
+    "from": "frontend_mgr",
+    "to": "tokenizer",
+    "label": "ZMQ ipc minisgl_3 / minisgl_4\nTokenizeMsg",
+    "kind": "zmq"
+   },
+   {
+    "from": "tokenizer",
+    "to": "sched0",
+    "label": "ZMQ ipc minisgl_0\nUserMsg",
+    "kind": "zmq"
+   },
+   {
+    "from": "sched0",
+    "to": "detokenizer",
+    "label": "ZMQ ipc minisgl_1\nDetokenizeMsg",
+    "kind": "zmq"
+   },
+   {
+    "from": "detokenizer",
+    "to": "frontend_mgr",
+    "label": "ZMQ ipc minisgl_3\nUserReply",
+    "kind": "zmq"
+   },
+   {
+    "from": "sched0",
+    "to": "schedN",
+    "label": "ZMQ PUB/SUB minisgl_2\n广播消息（配 gloo 广播计数）",
+    "kind": "zmq"
+   },
+   {
+    "from": "sched0",
+    "to": "schedN",
+    "label": "NCCL all_reduce / all_gather\n激活值与 logits",
+    "kind": "nccl"
+   },
+   {
+    "from": "sched0",
+    "to": "engine",
+    "label": "进程内调用",
+    "kind": "inproc"
+   }
+  ]
+ },
+ "flows": [
+  {
+   "id": "online-request",
+   "title": "在线请求：从 HTTP 到 SSE 流",
+   "summary": "一次 /v1/chat/completions 请求经过三个 ZMQ 边界、四个进程，最后以 SSE 逐块返回。注意 tokenizer 与 scheduler 是两个进程，所以 prompt 要先序列化过去，token 也要再序列化回来。",
+   "actors": [
+    "客户端",
+    "API Server",
+    "FrontendManager",
+    "tokenize worker",
+    "Scheduler rank0",
+    "Engine",
+    "detokenizer"
+   ],
+   "steps": [
+    {
+     "from": "客户端",
+     "to": "API Server",
+     "label": "POST /v1/chat/completions",
+     "detail": "带 prompt 或 messages、max_tokens、采样参数。stream=true 时返回 text/event-stream。",
+     "symbol": "minisgl.server.api_server.v1_completions",
+     "hint": "看路由函数怎么把参数翻译成 SamplingParams"
+    },
+    {
+     "from": "API Server",
+     "to": "FrontendManager",
+     "label": "state.new_user() 分配 uid",
+     "detail": "uid 是后续所有消息的关联键，也是取消时的定位键。",
+     "symbol": "minisgl.server.api_server.FrontendManager.new_user"
+    },
+    {
+     "from": "API Server",
+     "to": "FrontendManager",
+     "label": "构造 TokenizeMsg 并发出",
+     "detail": "此时还没有 token，只有文本与采样参数。",
+     "symbol": "minisgl.server.api_server.FrontendManager.send_one"
+    },
+    {
+     "from": "FrontendManager",
+     "to": "tokenize worker",
+     "label": "ZMQ ipc minisgl_3：TokenizeMsg",
+     "detail": "一条 IPC 通道，前端与 tokenizer 分居两个进程。",
+     "symbol": "minisgl.utils.mp.ZmqAsyncPushQueue"
+    },
+    {
+     "from": "tokenize worker",
+     "to": "tokenize worker",
+     "label": "套 chat 模板 + 编码",
+     "detail": "messages 形式会先套模板；结果是一维 int32 tensor。",
+     "symbol": "minisgl.tokenizer.tokenize.TokenizeManager"
+    },
+    {
+     "from": "tokenize worker",
+     "to": "Scheduler rank0",
+     "label": "ZMQ ipc minisgl_0：UserMsg",
+     "detail": "token ids 以 msgpack 编码，Tensor 单独走 buffer + dtype 字段。",
+     "symbol": "minisgl.message.backend.UserMsg"
+    },
+    {
+     "from": "Scheduler rank0",
+     "to": "Scheduler rank0",
+     "label": "按 max_tokens 裁剪并放入待入队列表",
+     "detail": "裁剪到 max_seq_len 之内，避免超出 KV 容量。",
+     "symbol": "minisgl.scheduler.scheduler.Scheduler._process_one_msg"
+    },
+    {
+     "from": "Scheduler rank0",
+     "to": "Scheduler rank0",
+     "label": "调度一个 prefill 批次",
+     "detail": "prefill 优先；凑不出批次就返回空，本轮只处理上一批的结果。",
+     "symbol": "minisgl.scheduler.scheduler.Scheduler._schedule_next_batch"
+    },
+    {
+     "from": "Scheduler rank0",
+     "to": "Engine",
+     "label": "准备批次：分页、位置、页表",
+     "detail": "分配页、算 positions、把 out_loc 从页表取出来。",
+     "symbol": "minisgl.scheduler.scheduler.Scheduler._prepare_batch"
+    },
+    {
+     "from": "Scheduler rank0",
+     "to": "Engine",
+     "label": "前向 + 采样",
+     "detail": "decode 且批大小在已捕获范围内会走 CUDA Graph。",
+     "symbol": "minisgl.engine.engine.Engine.forward_batch"
+    },
+    {
+     "from": "Scheduler rank0",
+     "to": "Scheduler rank0",
+     "label": "下一轮处理上一批的结果",
+     "detail": "这是 overlap：GPU 在算当前批，CPU 在处理上一批。",
+     "symbol": "minisgl.scheduler.scheduler.Scheduler._process_last_data"
+    },
+    {
+     "from": "Scheduler rank0",
+     "to": "detokenizer",
+     "label": "ZMQ ipc minisgl_1：DetokenizeMsg",
+     "detail": "只送新采样的那一个 token。",
+     "symbol": "minisgl.message.tokenizer.DetokenizeMsg"
+    },
+    {
+     "from": "detokenizer",
+     "to": "detokenizer",
+     "label": "增量解码，决定这一轮能吐出多少字符",
+     "detail": "要处理 UTF-8 边界与中文，不能吐半个字。",
+     "symbol": "minisgl.tokenizer.detokenize.DetokenizeManager"
+    },
+    {
+     "from": "detokenizer",
+     "to": "FrontendManager",
+     "label": "ZMQ ipc minisgl_3：UserReply",
+     "detail": "带 incremental_output 与 finished 标记。",
+     "symbol": "minisgl.message.frontend.UserReply"
+    },
+    {
+     "from": "FrontendManager",
+     "to": "客户端",
+     "label": "SSE 分帧：data: {...}\\n\\n",
+     "detail": "OpenAI 兼容模式下最后补一个 data: [DONE]。",
+     "symbol": "minisgl.server.api_server.FrontendManager.stream_chat_completions"
+    }
+   ]
+  },
+  {
+   "id": "offline-generate",
+   "title": "离线路径：单进程内跑通一次生成",
+   "summary": "LLM 类继承 Scheduler，用 offline_mode 把跨进程收发换成内存队列。读这条路径最快，因为它把 ZMQ 与 HTTP 都拿掉了。",
+   "actors": [
+    "调用方",
+    "LLM(=Scheduler)",
+    "Engine"
+   ],
+   "steps": [
+    {
+     "from": "调用方",
+     "to": "LLM(=Scheduler)",
+     "label": "LLM(model_path, ...)",
+     "detail": "构造时 tp_info 固定为单卡、offline_mode=True。",
+     "symbol": "minisgl.llm.llm.LLM.__init__"
+    },
+    {
+     "from": "LLM(=Scheduler)",
+     "to": "Engine",
+     "label": "super().__init__(config) 建 Engine",
+     "detail": "与在线模式共用同一套 Engine 与调度器。",
+     "symbol": "minisgl.scheduler.scheduler.Scheduler.__init__"
+    },
+    {
+     "from": "调用方",
+     "to": "LLM(=Scheduler)",
+     "label": "generate(prompts, sampling_params)",
+     "detail": "参数与请求数量不一致时会把标量广播到每一条。",
+     "symbol": "minisgl.llm.llm.LLM.generate"
+    },
+    {
+     "from": "LLM(=Scheduler)",
+     "to": "LLM(=Scheduler)",
+     "label": "请求放进 pending_requests",
+     "detail": "带上 uid 与状态表，uid 在这里由计数器分配。",
+     "symbol": "minisgl.llm.llm.LLM.generate"
+    },
+    {
+     "from": "LLM(=Scheduler)",
+     "to": "LLM(=Scheduler)",
+     "label": "run_forever()",
+     "detail": "与在线模式同一个主循环。",
+     "symbol": "minisgl.scheduler.scheduler.Scheduler.run_forever"
+    },
+    {
+     "from": "LLM(=Scheduler)",
+     "to": "Engine",
+     "label": "每轮从内存队列取请求",
+     "detail": "offline_receive_msg 顶替了 ZMQ 拉取。",
+     "symbol": "minisgl.llm.llm.LLM.offline_receive_msg"
+    },
+    {
+     "from": "Engine",
+     "to": "LLM(=Scheduler)",
+     "label": "采样的 token 回写状态表",
+     "detail": "offline_send_result 顶替了发给 detokenizer。",
+     "symbol": "minisgl.llm.llm.LLM.offline_send_result"
+    },
+    {
+     "from": "LLM(=Scheduler)",
+     "to": "调用方",
+     "label": "请求清空后抛 RequestAllFinished",
+     "detail": "作为跳出无限循环的信号，generate 捕获后统一解码返回。",
+     "symbol": "minisgl.llm.llm.LLM.generate"
+    }
+   ]
+  },
+  {
+   "id": "prefill-step",
+   "title": "一个 prefill 步：准入、切块、分页",
+   "summary": "prefill 步的预算由 token_budget 与 reserved_size 两个量决定。前者是这一步最多放进多少 token，后者是在跑 decode 预留的显存空间。",
+   "actors": [
+    "PrefillManager",
+    "PrefillAdder",
+    "CacheManager",
+    "TableManager",
+    "Engine"
+   ],
+   "steps": [
+    {
+     "from": "PrefillManager",
+     "to": "PrefillManager",
+     "label": "有等待请求就尝试组批",
+     "detail": "minisgl.scheduler.prefill.PrefillManager.schedule_next_batch"
+    },
+    {
+     "from": "PrefillManager",
+     "to": "PrefillAdder",
+     "label": "建预算：token_budget = max_extend_tokens",
+     "detail": "默认 8192，命令行 --max-prefill-length 可改。",
+     "symbol": "minisgl.scheduler.prefill.PrefillAdder",
+     "hint": "hint: reserved_size 初始化为 decode_manager.inflight_tokens"
+    },
+    {
+     "from": "PrefillAdder",
+     "to": "CacheManager",
+     "label": "算这次要新占用多少页",
+     "detail": "估计量是 extend_len + output_len，要和 available_size 比。",
+     "symbol": "minisgl.scheduler.prefill.PrefillAdder._try_allocate_one"
+    },
+    {
+     "from": "PrefillAdder",
+     "to": "CacheManager",
+     "label": "match_prefix 查前缀缓存",
+     "detail": "命中的部分不用重算，页也已经是现成的。",
+     "symbol": "minisgl.scheduler.cache.CacheManager.match_req"
+    },
+    {
+     "from": "PrefillAdder",
+     "to": "TableManager",
+     "label": "申请一个请求槽位",
+     "detail": "槽位就是页表的行号，dummy 请求固定占最后一行。",
+     "symbol": "minisgl.scheduler.table.TableManager.allocate"
+    },
+    {
+     "from": "PrefillAdder",
+     "to": "PrefillAdder",
+     "label": "算 chunk_size = min(token_budget, remain_len)",
+     "detail": "装不下就退化成 ChunkedReq，本轮不能采样。",
+     "symbol": "minisgl.scheduler.prefill.PrefillAdder._add_one_req"
+    },
+    {
+     "from": "PrefillAdder",
+     "to": "PrefillAdder",
+     "label": "token 拷进 token_pool",
+     "detail": "拷的是 host tensor，之后由调度器搬到 GPU。",
+     "symbol": "minisgl.scheduler.prefill.PrefillAdder._add_one_req"
+    },
+    {
+     "from": "PrefillAdder",
+     "to": "PrefillManager",
+     "label": "把能装的都装上，遇到第一个装不下的就停",
+     "detail": "队头阻塞：不跳过装不下的请求去装后面的。",
+     "symbol": "minisgl.scheduler.prefill.PrefillManager.schedule_next_batch"
+    },
+    {
+     "from": "PrefillManager",
+     "to": "CacheManager",
+     "label": "分配页并写页表",
+     "detail": "从 free_slots 取页，不够就先淘汰前缀缓存。",
+     "symbol": "minisgl.scheduler.cache.CacheManager.allocate_paged"
+    },
+    {
+     "from": "CacheManager",
+     "to": "CacheManager",
+     "label": "页起点展开成 token 级位置",
+     "detail": "page_size > 1 时，一个页要展开成连续的若干位置。",
+     "symbol": "minisgl.scheduler.cache.CacheManager._page_to_token"
+    },
+    {
+     "from": "CacheManager",
+     "to": "CacheManager",
+     "label": "把位置散射进页表对应行",
+     "detail": "表里存的是 KV 位置而不是页号，这是本实现的取巧之处。",
+     "symbol": "minisgl.scheduler.cache._write_page_table"
+    },
+    {
+     "from": "PrefillManager",
+     "to": "Engine",
+     "label": "前向",
+     "detail": "attention 后端读页表定位 KV，prefill 与 decode 走不同分支。",
+     "symbol": "minisgl.engine.engine.Engine.forward_batch"
+    }
+   ]
+  },
+  {
+   "id": "decode-step-overlap",
+   "title": "一个 decode 步：双流与事件同步",
+   "summary": "overlap 调度让当前批的前向（engine 流）与上一批的后处理（调度器流）并行。两流之间靠 wait_stream 与记录在流上的事件对齐。",
+   "actors": [
+    "Scheduler 流",
+    "Engine 流",
+    "Sampler",
+    "DecodeManager"
+   ],
+   "steps": [
+    {
+     "from": "Scheduler 流",
+     "to": "Scheduler 流",
+     "label": "先非阻塞收消息",
+     "detail": "只有在上一批待处理或队列非空时才不阻塞。",
+     "symbol": "minisgl.scheduler.scheduler.Scheduler.overlap_loop"
+    },
+    {
+     "from": "Scheduler 流",
+     "to": "Scheduler 流",
+     "label": "组成 decode 批次",
+     "detail": "运行中请求按 uid 排序，顺序稳定便于对账。",
+     "symbol": "minisgl.scheduler.decode.DecodeManager.schedule_next_batch"
+    },
+    {
+     "from": "Scheduler 流",
+     "to": "Scheduler 流",
+     "label": "分配这一步新增的页",
+     "detail": "decode 每步可能跨页，跨页才需要新页。",
+     "symbol": "minisgl.scheduler.cache.CacheManager.allocate_paged"
+    },
+    {
+     "from": "Scheduler 流",
+     "to": "Engine 流",
+     "label": "engine 流等待调度器流",
+     "detail": "wait_stream 保证页表与输入 ids 已写好。",
+     "symbol": "minisgl.scheduler.scheduler.Scheduler.overlap_loop",
+     "hint": "hint: self.engine.stream.wait_stream(self.stream)"
+    },
+    {
+     "from": "Engine 流",
+     "to": "Engine 流",
+     "label": "device_len 先自增",
+     "detail": "complete_one 在采样之前调用，采样结果下一轮才回写。",
+     "symbol": "minisgl.core.Req.complete_one"
+    },
+    {
+     "from": "Engine 流",
+     "to": "Engine 流",
+     "label": "前向：走 CUDA Graph 或 eager",
+     "detail": "decode 且批大小不超过上限时走图。",
+     "symbol": "minisgl.engine.graph.GraphRunner.replay"
+    },
+    {
+     "from": "Engine 流",
+     "to": "Sampler",
+     "label": "采样",
+     "detail": "整批都是贪心时直接 argmax，否则走 flashinfer 采样。",
+     "symbol": "minisgl.engine.sample.Sampler.sample"
+    },
+    {
+     "from": "Engine 流",
+     "to": "Scheduler 流",
+     "label": "新 token 拷回 CPU 并记录事件",
+     "detail": "拷贝是非阻塞的，事件记在 engine 流上。",
+     "symbol": "minisgl.engine.engine.Engine.forward_batch",
+     "hint": "hint: next_tokens_cpu = next_tokens_gpu.to('cpu', non_blocking=True)"
+    },
+    {
+     "from": "Scheduler 流",
+     "to": "Scheduler 流",
+     "label": "处理上一批：等事件、取 token",
+     "detail": "事件同步之后才能安全读 CPU 上的 token。",
+     "symbol": "minisgl.scheduler.scheduler.Scheduler._process_last_data"
+    },
+    {
+     "from": "Scheduler 流",
+     "to": "Scheduler 流",
+     "label": "判断结束：到了 max_tokens 或命中 eos",
+     "detail": "ignore_eos 为真时忽略 eos，压测常用。",
+     "symbol": "minisgl.scheduler.scheduler.Scheduler._process_last_data"
+    },
+    {
+     "from": "Scheduler 流",
+     "to": "DecodeManager",
+     "label": "把不能继续的请求移出运行集合",
+     "detail": "can_decode 为假即 remain_len 用完。",
+     "symbol": "minisgl.scheduler.decode.DecodeManager.filter_reqs"
+    },
+    {
+     "from": "Scheduler 流",
+     "to": "Scheduler 流",
+     "label": "释放槽位并把前缀存进缓存",
+     "detail": "结束的请求整段入树，未结束的只放入已算完的部分。",
+     "symbol": "minisgl.scheduler.cache.CacheManager.cache_req"
+    }
+   ]
+  },
+  {
+   "id": "cuda-graph",
+   "title": "CUDA Graph 的捕获与回放",
+   "summary": "捕获发生在 Engine 初始化阶段，针对一组固定的批大小；回放时把真实批次拷进静态缓冲区再重放。decode 收益大而 prefill 收益小，因为 prefill 的批大小与形状每轮都变。",
+   "actors": [
+    "Engine",
+    "GraphRunner",
+    "attention 后端"
+   ],
+   "steps": [
+    {
+     "from": "Engine",
+     "to": "GraphRunner",
+     "label": "确定要捕获哪些批大小",
+     "detail": "默认 1、2、4，再加 8 到上限的 8 的倍数；显存大于 80G 时上限 256。",
+     "symbol": "minisgl.engine.graph._determine_cuda_graph_bs"
+    },
+    {
+     "from": "GraphRunner",
+     "to": "attention 后端",
+     "label": "init_capture_graph",
+     "detail": "后端要先知道有哪些批大小，才能准备自己的捕获缓冲区。",
+     "symbol": "minisgl.attention.base.BaseAttnBackend.init_capture_graph"
+    },
+    {
+     "from": "GraphRunner",
+     "to": "GraphRunner",
+     "label": "分配静态输入输出缓冲",
+     "detail": "input_ids、out_loc、positions、logits 都是固定的显存。",
+     "symbol": "minisgl.engine.graph.GraphCaptureBuffer.init"
+    },
+    {
+     "from": "GraphRunner",
+     "to": "GraphRunner",
+     "label": "造一个假的 decode 批次并预热",
+     "detail": "预热必须先跑一遍，捕获时不能再有分配与同步。",
+     "symbol": "minisgl.engine.graph.GraphRunner._capture_graphs"
+    },
+    {
+     "from": "GraphRunner",
+     "to": "Engine",
+     "label": "捕获 model.forward()",
+     "detail": "整条前向从词嵌入到 lm_head 都被录进图里。",
+     "symbol": "minisgl.engine.graph.GraphRunner._capture_graphs",
+     "hint": "hint: with torch.cuda.graph(graph, pool=pool, stream=self.stream)"
+    },
+    {
+     "from": "GraphRunner",
+     "to": "GraphRunner",
+     "label": "按批大小从小到大逐级捕获",
+     "detail": "批大小逐级放大，后续复用同一个显存池以减少占用。",
+     "symbol": "minisgl.engine.graph.GraphRunner._capture_graphs"
+    },
+    {
+     "from": "GraphRunner",
+     "to": "GraphRunner",
+     "label": "回放前：把真实批次拷进静态缓冲",
+     "detail": "批大小先对齐到已捕获的一档，不足的用假请求补齐。",
+     "symbol": "minisgl.engine.graph.GraphRunner.pad_batch"
+    },
+    {
+     "from": "GraphRunner",
+     "to": "attention 后端",
+     "label": "prepare_for_replay",
+     "detail": "把页表、序列长度等元数据写进后端自己的静态缓冲。",
+     "symbol": "minisgl.attention.base.BaseAttnBackend.prepare_for_replay"
+    },
+    {
+     "from": "GraphRunner",
+     "to": "Engine",
+     "label": "重放并取 logits",
+     "detail": "重放不含采样，采样仍在图外做。",
+     "symbol": "minisgl.engine.graph.GraphRunner.replay"
+    },
+    {
+     "from": "GraphRunner",
+     "to": "GraphRunner",
+     "label": "关闭时要先销毁图再拆通信",
+     "detail": "顺序反了会在 NCCL 释放时崩。",
+     "symbol": "minisgl.engine.graph.GraphRunner.destroy_cuda_graphs"
+    }
+   ]
+  },
+  {
+   "id": "chunked-prefill",
+   "title": "Chunked Prefill：一个长 prompt 跨多轮推进",
+   "summary": "长 prompt 一次装不下就切成 ChunkedReq，它的 can_decode 恒为假，所以这一轮不采样，只在下一轮继续往前推。这样长 prompt 不会把 decode 饿死。",
+   "actors": [
+    "PrefillManager",
+    "PrefillAdder",
+    "ChunkedReq",
+    "CacheManager",
+    "Engine"
+   ],
+   "steps": [
+    {
+     "from": "PrefillManager",
+     "to": "PrefillAdder",
+     "label": "第 1 轮：预算装不下整条 prompt",
+     "detail": "例如 prompt 有 20000 token，而预算是 8192。",
+     "symbol": "minisgl.scheduler.prefill.PrefillAdder.try_add_one"
+    },
+    {
+     "from": "PrefillAdder",
+     "to": "ChunkedReq",
+     "label": "chunk_size = min(预算, 剩余长度)",
+     "detail": "chunk_size 小于剩余长度，于是用 ChunkedReq 而不是 Req。",
+     "symbol": "minisgl.scheduler.prefill.PrefillAdder._add_one_req"
+    },
+    {
+     "from": "ChunkedReq",
+     "to": "ChunkedReq",
+     "label": "input_ids 截到 cached_len + chunk_size",
+     "detail": "请求对象看到的「输入」就是这一段，长度随轮次增长。",
+     "symbol": "minisgl.scheduler.prefill.ChunkedReq"
+    },
+    {
+     "from": "ChunkedReq",
+     "to": "ChunkedReq",
+     "label": "can_decode 恒为假",
+     "detail": "所以这一轮不分配输出位置、不采样、不发 detokenize 消息。",
+     "symbol": "minisgl.scheduler.prefill.ChunkedReq",
+     "hint": "hint: append_host 也会直接抛异常"
+    },
+    {
+     "from": "PrefillAdder",
+     "to": "PrefillAdder",
+     "label": "待切块请求挪到队头",
+     "detail": "保证下一轮优先继续推进它，而不是被新请求插队。",
+     "symbol": "minisgl.scheduler.prefill.PrefillManager.schedule_next_batch"
+    },
+    {
+     "from": "PrefillManager",
+     "to": "CacheManager",
+     "label": "这一轮算完的 KV 留在页里",
+     "detail": "cached_len 前移到本轮结束位置，下一轮从新位置继续。",
+     "symbol": "minisgl.scheduler.scheduler.Scheduler._process_last_data"
+    },
+    {
+     "from": "PrefillManager",
+     "to": "PrefillAdder",
+     "label": "第 2..k 轮：复用同一个槽位与页",
+     "detail": "不再重新申请槽位，接着上次的 cached_len 往下算。",
+     "symbol": "minisgl.scheduler.prefill.PrefillAdder.try_add_one"
+    },
+    {
+     "from": "PrefillAdder",
+     "to": "PrefillManager",
+     "label": "最后一轮：这次能装下整条 prompt",
+     "detail": "重新变回普通 Req，开始正常采样。",
+     "symbol": "minisgl.scheduler.prefill.PrefillAdder._add_one_req"
+    },
+    {
+     "from": "PrefillManager",
+     "to": "Engine",
+     "label": "整条 prompt 的 KV 齐了，进入 decode",
+     "detail": "从这里开始每轮只算一个 token。",
+     "symbol": "minisgl.scheduler.decode.DecodeManager.schedule_next_batch"
+    }
+   ]
+  },
+  {
+   "id": "radix-cache",
+   "title": "Radix 前缀缓存：匹配、分裂、加锁与淘汰",
+   "summary": "树的每个节点存一段连续 token 与它们对应的 KV 位置。匹配到一半要分裂节点，正在被引用的节点由 ref_count 保护起来。淘汰只发生在上锁为 0 的叶子节点上，按时间戳挑最旧的。",
+   "actors": [
+    "CacheManager",
+    "RadixPrefixCache",
+    "RadixTreeNode",
+    "RadixCacheHandle"
+   ],
+   "steps": [
+    {
+     "from": "CacheManager",
+     "to": "RadixPrefixCache",
+     "label": "match_prefix(input_ids[:-1])",
+     "detail": "去掉最后一个 token：它是本次要新算的，不需要命中原样。",
+     "symbol": "minisgl.scheduler.cache.CacheManager.match_req",
+     "hint": "hint: 只匹配到倒数第二个 token"
+    },
+    {
+     "from": "RadixPrefixCache",
+     "to": "RadixTreeNode",
+     "label": "_tree_walk 逐层找子节点",
+     "detail": "键由 page_size 决定：1 时是单个 token，否则是一页的 token 元组。",
+     "symbol": "minisgl.kvcache.radix_cache.RadixPrefixCache._tree_walk"
+    },
+    {
+     "from": "RadixTreeNode",
+     "to": "RadixTreeNode",
+     "label": "get_match_len 找第一个不同的位置",
+     "detail": "整数前缀比较在 CPU 上用 C++ 实现，很快。",
+     "symbol": "minisgl.kvcache.radix_cache.RadixTreeNode.get_match_len"
+    },
+    {
+     "from": "RadixTreeNode",
+     "to": "RadixTreeNode",
+     "label": "匹配长度按页对齐",
+     "detail": "只命中半页不能算命中，冻结在页边界上。",
+     "symbol": "minisgl.kvcache.radix_cache.RadixPrefixCache._tree_walk",
+     "hint": "hint: match_len = align_down(match_len, page_size)"
+    },
+    {
+     "from": "RadixTreeNode",
+     "to": "RadixTreeNode",
+     "label": "部分命中就分裂节点",
+     "detail": "新节点拿前缀，原节点留后缀，父指针与引用计数都要修。",
+     "symbol": "minisgl.kvcache.radix_cache.RadixTreeNode.split_at"
+    },
+    {
+     "from": "RadixPrefixCache",
+     "to": "RadixCacheHandle",
+     "label": "返回句柄：命中长度 + 命中节点",
+     "detail": "句柄能顺着父指针一路收集到根，拼出完整的 KV 位置序列。",
+     "symbol": "minisgl.kvcache.radix_cache.RadixCacheHandle"
+    },
+    {
+     "from": "RadixPrefixCache",
+     "to": "RadixPrefixCache",
+     "label": "lock_handle 增加沿路引用计数",
+     "detail": "ref_count 从 0 变 1 时，这些节点的长度从可淘汰量移到受保护量。",
+     "symbol": "minisgl.kvcache.radix_cache.RadixPrefixCache.lock_handle"
+    },
+    {
+     "from": "RadixPrefixCache",
+     "to": "RadixPrefixCache",
+     "label": "插入本轮新算出的后缀",
+     "detail": "只在页对齐的长度上插入，索引会克隆一份给节点自己持有。",
+     "symbol": "minisgl.kvcache.radix_cache.RadixPrefixCache.insert_prefix"
+    },
+    {
+     "from": "CacheManager",
+     "to": "RadixPrefixCache",
+     "label": "页不够时触发淘汰",
+     "detail": "缺多少就淘汰多少，淘汰出来的位置回填 free_slots。",
+     "symbol": "minisgl.scheduler.cache.CacheManager._allocate"
+    },
+    {
+     "from": "RadixPrefixCache",
+     "to": "RadixTreeNode",
+     "label": "收集可淘汰的叶子并按时间戳排序",
+     "detail": "引用计数为 0 且是叶子才有资格；弹出父节点后可能又变成叶子。",
+     "symbol": "minisgl.kvcache.radix_cache.RadixPrefixCache.evict"
+    },
+    {
+     "from": "RadixPrefixCache",
+     "to": "RadixPrefixCache",
+     "label": "从父节点的 children 里摘掉",
+     "detail": "同时把长度从可淘汰量里扣掉。",
+     "symbol": "minisgl.kvcache.radix_cache.RadixPrefixCache.evict"
+    },
+    {
+     "from": "CacheManager",
+     "to": "CacheManager",
+     "label": "check_integrity：空闲页加缓存页应等于总页数",
+     "detail": "空闲时调用，用来发现漏加或漏减。",
+     "symbol": "minisgl.scheduler.cache.CacheManager.check_integrity"
+    }
+   ]
+  },
+  {
+   "id": "tp-allreduce",
+   "title": "张量并行：一次前向里的 all_reduce",
+   "summary": "权重在加载时按维切开：列并行切输出维，行并行切输入维。行并行的输出是各 rank 的部分和，必须 all_reduce 才能继续。两个 rank 的时序完全对称。",
+   "actors": [
+    "rank0",
+    "rank1",
+    "NCCL"
+   ],
+   "steps": [
+    {
+     "from": "rank0",
+     "to": "rank0",
+     "label": "加载权重时按维切分",
+     "detail": "q/k/v/gate/up 切第 0 维，o/down 切第 1 维；KV 头不够切就复制。",
+     "symbol": "minisgl.models.weight.load_weight",
+     "hint": "hint: _shard_tensor"
+    },
+    {
+     "from": "rank1",
+     "to": "rank1",
+     "label": "同样加载自己那份",
+     "detail": "除词嵌入与 lm_head 按词表切分，其他维度两边对称。",
+     "symbol": "minisgl.models.weight.load_weight"
+    },
+    {
+     "from": "rank0",
+     "to": "rank0",
+     "label": "词嵌入查表后局部 all_reduce",
+     "detail": "每个 rank 只持有部分词表，查表结果要合并。",
+     "symbol": "minisgl.layers.embedding.VocabParallelEmbedding.forward"
+    },
+    {
+     "from": "rank0",
+     "to": "rank0",
+     "label": "列并行线性层：无需通信",
+     "detail": "输出被切开，每个 rank 拿到自己那部分头或隐藏维。",
+     "symbol": "minisgl.layers.linear.LinearColParallelMerged"
+    },
+    {
+     "from": "rank0",
+     "to": "rank0",
+     "label": "attention 在本地头上算",
+     "detail": "每张卡只看自己的 q/kv 头，KV 池也因此只存本地头。",
+     "symbol": "minisgl.kvcache.mha_pool.MHAKVCache.__init__"
+    },
+    {
+     "from": "rank0",
+     "to": "NCCL",
+     "label": "行并行输出做 all_reduce（rank0 视角）",
+     "detail": "输入被切开，输出是部分和，必须求和才能还原。",
+     "symbol": "minisgl.layers.linear.LinearRowParallel.forward"
+    },
+    {
+     "from": "rank1",
+     "to": "NCCL",
+     "label": "行并行输出做 all_reduce（rank1 视角）",
+     "detail": "与 rank0 同一次集合通信，两边同时进入。",
+     "symbol": "minisgl.layers.linear.LinearRowParallel.forward"
+    },
+    {
+     "from": "NCCL",
+     "to": "rank0",
+     "label": "返回完整输出，残差继续往下走",
+     "detail": "小张量走通信器自带缓冲区，避免反复申请显存。",
+     "symbol": "minisgl.distributed.impl.PyNCCLDistributedImpl"
+    },
+    {
+     "from": "rank0",
+     "to": "rank0",
+     "label": "每层重复上述过程",
+     "detail": "所以一层的通信点数是固定的两个：嵌入或 logits，加上每个行并行层。",
+     "symbol": "minisgl.models.qwen3.Qwen3DecoderLayer.forward"
+    },
+    {
+     "from": "rank0",
+     "to": "NCCL",
+     "label": "lm_head 结果 all_gather",
+     "detail": "词表被切开，需要拼回完整 logits 才能采样。",
+     "symbol": "minisgl.layers.embedding.ParallelLMHead.forward"
+    },
+    {
+     "from": "NCCL",
+     "to": "rank0",
+     "label": "采样只在主 rank 做，token 广播给其他 rank",
+     "detail": "保证各 rank 的下一步输入一致。",
+     "symbol": "minisgl.scheduler.io.SchedulerIOMixin._recv_msg_multi_rank0"
+    }
+   ]
+  }
+ ],
+ "kv_scenario": {
+  "title": "两个请求共享前缀，第三个请求被空间卡住",
+  "desc": "r1 跑完把 16 个 token 的前缀留在树上；r2 复用了这段前缀，因此 r2 运行期间这段缓存被引用计数保护，可淘汰量为 0；r3 于是进不来，直到 r2 结束、缓存被淘汰、r3 才被准入。整条脚本逐步对应 CacheManager 与 RadixPrefixCache 的真实行为。",
+  "params": {
+   "page_size": 4,
+   "num_pages": 8,
+   "max_running_req": 4
+  },
+  "ops": [
+   {
+    "op": "note",
+    "text": "初始状态：8 个页全空闲，页表全空，Radix 树只有根节点。请求槽位池是 range(max_running_req)，申请时从列表尾部弹出，所以第一个请求拿到的是最后一行。",
+    "symbol": "minisgl.scheduler.cache.CacheManager.__init__",
+    "hint": "free_slots = arange(num_pages) * page_size"
+   },
+   {
+    "op": "submit",
+    "text": "r1 进来：prompt 11 个 token，最多再生成 5 个。此时还没有 table_idx，请求只是在待入队列表里。",
+    "symbol": "minisgl.scheduler.prefill.PrefillManager.add_one_req",
+    "uid": 1,
+    "prompt": 11,
+    "output": 5
+   },
+   {
+    "op": "admit",
+    "text": "r1 的前缀匹配：树上只有根节点，命中 0。cached_len=0，extend_len=11，整段都要算。",
+    "symbol": "minisgl.scheduler.prefill.PrefillAdder._try_allocate_one",
+    "uid": 1,
+    "hit": 0
+   },
+   {
+    "op": "allocate",
+    "text": "分 3 页（ceil(11/4)=3）给 r1。页起点展开成 12 个 token 位置写进页表第 3 行 —— 注意 12 个位置里有 1 个是块内 slack，prompt 只用到 11 个。",
+    "symbol": "minisgl.scheduler.cache.CacheManager.allocate_paged",
+    "hint": "_page_to_token：把页起点展开成连续位置",
+    "uid": 1,
+    "pages": 3
+   },
+   {
+    "op": "note",
+    "text": "prefill 前向：11 个 token 的 K/V 写进这 3 页。这一步之后 r1 进入 decode。",
+    "symbol": "minisgl.kvcache.mha_pool.MHAKVCache.store_kv"
+   },
+   {
+    "op": "decode",
+    "text": "第 1 次 decode：cached_len=11，device_len 从 11 增到 12。position 11 正好落在第 3 页的 slack 里，所以这一步不需要新页。",
+    "symbol": "minisgl.core.Req.complete_one",
+    "uid": 1
+   },
+   {
+    "op": "decode",
+    "text": "第 2 次 decode：device_len 增到 13，越过页边界，需要第 4 页。",
+    "symbol": "minisgl.core.Req.complete_one",
+    "uid": 1
+   },
+   {
+    "op": "allocate",
+    "text": "分第 4 页。r1 一共拿到 16 个 token 位置，正好等于 prompt 11 加输出 5。",
+    "symbol": "minisgl.scheduler.cache.CacheManager._allocate",
+    "uid": 1,
+    "pages": 1
+   },
+   {
+    "op": "finish",
+    "text": "r1 结束：释放槽位，把整段 16 个 token 的前缀插入 Radix 树，同时把引用计数解锁。",
+    "symbol": "minisgl.scheduler.cache.CacheManager.cache_req",
+    "uid": 1
+   },
+   {
+    "op": "tree_insert",
+    "text": "插入按页对齐：16 正好是 4 页，成为一个节点。此刻 evictable_size=16，protected_size=0，空闲 4 页。",
+    "symbol": "minisgl.kvcache.radix_cache.RadixPrefixCache.insert_prefix",
+    "uid": 1,
+    "length": 16
+   },
+   {
+    "op": "submit",
+    "text": "r2 进来：prompt 20 个 token，前 16 个与 r1 完全相同，输出 4 个。",
+    "symbol": "minisgl.scheduler.prefill.PrefillAdder.try_add_one",
+    "uid": 2,
+    "prompt": 20,
+    "output": 4
+   },
+   {
+    "op": "match",
+    "text": "r2 的前缀匹配：命中了 r1 留下的那 16 个 token（4 页）。匹配只做到倒数第二个 token，最后那个本来就要新算。",
+    "symbol": "minisgl.kvcache.radix_cache.RadixPrefixCache.match_prefix",
+    "uid": 2,
+    "hit": 16
+   },
+   {
+    "op": "lock",
+    "text": "lock_handle：沿路 ref_count 从 0 变 1，这 16 个 token 从可淘汰量移到受保护量。evictable_size 归零，protected_size 变成 16。",
+    "symbol": "minisgl.kvcache.radix_cache.RadixPrefixCache.lock_handle",
+    "uid": 2
+   },
+   {
+    "op": "allocate",
+    "text": "r2 只需要为第 17 到 20 个 token 算 prefill，即 1 页；再留 1 页给后面的 decode 跨页。空闲从 4 页降到 2 页。",
+    "symbol": "minisgl.scheduler.cache.CacheManager.allocate_paged",
+    "uid": 2,
+    "pages": 2
+   },
+   {
+    "op": "note",
+    "text": "关键状态：空闲 2 页（8 个 token），可淘汰量 0，受保护量 16。唯一的前缀节点正被 r2 引用，所以此刻缓存里一个 token 都淘汰不出来。",
+    "symbol": "minisgl.scheduler.cache.CacheManager.available_size",
+    "hint": "available_size = evictable_size + len(free_slots) * page_size"
+   },
+   {
+    "op": "submit",
+    "text": "r3 进来：prompt 12 个 token，输出 4 个，前缀与 r1 完全不同。",
+    "symbol": "minisgl.scheduler.prefill.PrefillAdder.try_add_one",
+    "uid": 3,
+    "prompt": 12,
+    "output": 4
+   },
+   {
+    "op": "degrade",
+    "text": "r3 准入失败：估计要 16 个 token 的空间，而 available_size 只有 0 + 2×4 = 8。注意它不是因为总容量不够 —— 如果那 16 个受保护的 token 能淘汰，空间是够的。",
+    "symbol": "minisgl.scheduler.prefill.PrefillAdder._try_allocate_one",
+    "uid": 3
+   },
+   {
+    "op": "note",
+    "text": "所以 r3 只能等：要么 r2 结束释放引用，要么有新页空出来。这就是空闲页不等于可用空间的含义。",
+    "symbol": "minisgl.scheduler.cache.CacheManager.available_size"
+   },
+   {
+    "op": "finish",
+    "text": "r2 结束：解锁那 16 个 token（受保护量归零、可淘汰量回到 16），并把 r2 新算的 8 个 token 插成子节点。树上有 24 个 token 可淘汰，即 6 页。",
+    "symbol": "minisgl.scheduler.cache.CacheManager.cache_req",
+    "uid": 2
+   },
+   {
+    "op": "evict",
+    "text": "r3 重试需要 6 页而空闲只有 2 页，触发淘汰：缺 4 页即 16 个 token。可淘汰的叶子只有那个 8 token 的子节点，淘汰它只有 2 页，不够；父节点这时变成叶子且没人引用，于是接着被淘汰。两轮共淘汰 24 个 token，也就是 6 页 —— 比需要的多淘汰了 2 页，因为淘汰以节点为粒度，不能只削一半。",
+    "symbol": "minisgl.kvcache.radix_cache.RadixPrefixCache.evict",
+    "hint": "弹出父节点后要重新判断它是否变成可淘汰叶子",
+    "need_pages": 6
+   },
+   {
+    "op": "admit",
+    "text": "r3 再次准入：刚才淘汰的正是那段共享前缀，所以这次命中 0，整段 12 个 token 都要算。空闲已有 8 页，空间足够。",
+    "symbol": "minisgl.scheduler.prefill.PrefillAdder._try_allocate_one",
+    "uid": 3,
+    "hit": 0
+   },
+   {
+    "op": "allocate",
+    "text": "分 3 页给 r3（ceil(12/4)=3），空闲回到 5 页。",
+    "symbol": "minisgl.scheduler.cache.CacheManager.allocate_paged",
+    "uid": 3,
+    "pages": 3
+   },
+   {
+    "op": "finish",
+    "text": "r3 结束：它的 3 页进树，成为新的一段可淘汰前缀。",
+    "symbol": "minisgl.scheduler.cache.CacheManager.cache_req",
+    "uid": 3
+   },
+   {
+    "op": "integrity",
+    "text": "收尾自检：空闲 5 页加树上 3 页等于总页数 8。这个检查只在所有请求都停下时成立，因为运行中请求占的页既不在空闲里也不在树里。",
+    "symbol": "minisgl.scheduler.cache.CacheManager.check_integrity",
+    "uid": 3
+   }
+  ]
+ }
+}
