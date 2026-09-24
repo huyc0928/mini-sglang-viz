@@ -2,7 +2,7 @@
 
 import { api } from "../api";
 import { clear, el, hashColor, svg } from "../lib/dom";
-import { sourceBlock } from "../lib/hl";
+import { focusInto, sourceBlock } from "../lib/hl";
 import { CacheSim } from "../lib/simulator";
 import type { OpResult, SimParams } from "../lib/simulator";
 import { mountHead } from "../lib/view";
@@ -11,6 +11,11 @@ import type { View, ViewContext } from "./types";
 
 const NODE_W = 156;
 const NODE_H = 36;
+// 树的画布尺寸写死，不随树的大小变化。数值按脚本可能出现的最深层数与最多兄弟数留够：
+// 4 层 × 每层 3 个节点。viewBox 固定后，缩放比例也就固定了。
+// 宽度取 780 是为了配合模拟器两栏（各约 790px）的宽度，让树接近 1:1 显示。
+const TREE_VB_W = 780;
+const TREE_VB_H = 330;
 
 let playTimer: number | undefined;
 
@@ -75,7 +80,7 @@ async function renderSimulator(ctx: ViewContext): Promise<void> {
 
   const readout = el("div", { class: "row", style: "gap:18px;margin:10px 0" });
   const gridBox = el("div");
-  const treeBox = el("div");
+  const treeBox = el("div", { class: "diagram-frame" });
   const stepBox = el("div", { style: "margin-top:14px" });
   const sourceBox = el("div", { style: "margin-top:10px" });
 
@@ -265,17 +270,19 @@ async function renderSimulator(ctx: ViewContext): Promise<void> {
       layers[depth].push(String(node.id));
     }
     const maxRows = layers.reduce((m, l) => Math.max(m, l.length), 0);
-    const pitchY = NODE_H + 34;
-    const pitchX = NODE_W + 56;
+    const pitchY = (TREE_VB_H - NODE_H - 24) / Math.max(1, maxRows - 1 || 1);
+    const pitchX = (TREE_VB_W - NODE_W - 80) / Math.max(1, layers.length - 1 || 1);
     const pos = new Map<number, { x: number; y: number }>();
+    const spanX = (layers.length - 1) * pitchX;
+    const x0 = 40 + Math.max(0, (TREE_VB_W - 80 - NODE_W - spanX) / 2);
     layers.forEach((layer, li) => {
-      const offset = ((maxRows - layer.length) * pitchY) / 2;
-      layer.forEach((id, ri) => pos.set(Number(id), { x: li * pitchX, y: offset + ri * pitchY }));
+      const spanY = (layer.length - 1) * pitchY;
+      const y0 = 12 + Math.max(0, (TREE_VB_H - 24 - NODE_H - spanY) / 2);
+      layer.forEach((id, ri) => pos.set(Number(id), { x: x0 + li * pitchX, y: y0 + ri * pitchY }));
     });
-    const width = Math.max(420, layers.length * pitchX + 40);
-    const height = Math.max(220, maxRows * pitchY + 20);
-
-    const canvas = svg("svg", { viewBox: `0 0 ${width} ${height}`, style: "width:100%;height:auto;background:var(--bg-1);border:1px solid var(--line);border-radius:10px" });
+    // 画布尺寸固定：树长大或缩小都不改 viewBox，否则缩放比例会跟着变，
+    // 节点文字一会儿大一会儿小，整个右侧也会上下跳。
+    const canvas = svg("svg", { viewBox: `0 0 ${TREE_VB_W} ${TREE_VB_H}`, preserveAspectRatio: "xMidYMid meet" });
     const hl = new Set(lastResult?.highlightNodes ?? []);
     const isNew = new Set(lastResult?.newNodes ?? []);
 
@@ -380,12 +387,13 @@ async function renderSimulator(ctx: ViewContext): Promise<void> {
         el("span", { class: "faint", style: "font-size:12px", text: "浅色高亮是符号所在范围，深色高亮是步骤定位到的那一行（按 hint 或方法入口推断）。" }),
       ),
     );
-    sourceBox.append(sourceBlock(src.lines, sym.file, {
+    const block = sourceBlock(src.lines, sym.file, {
       highlight: [[sym.lineno, sym.end_lineno]],
       focusLine: focus,
       onLineClick: (n) => ctx.navigate(ctx.sourceRoute(sym.file, n)),
-    }));
-    sourceBox.querySelector<HTMLElement>("[data-focus]")?.scrollIntoView({ block: "nearest" });
+    });
+    sourceBox.append(block);
+    focusInto(block);
   }
 
   /** 尽量定位到 op 对应的那一行：优先用 hint 里的代码片段，否则退回符号入口 */

@@ -52,10 +52,21 @@ body {
 }
 
 #app {
+  --rail-w: 232px;
   display: grid;
-  grid-template-columns: 232px 1fr;
+  grid-template-columns: var(--rail-w) 1fr;
   grid-template-rows: 52px 1fr;
   grid-template-areas: "brand top" "rail main";
+}
+
+/* 侧栏收起：整列压到 0，切换按钮留在顶栏最左侧 */
+#app.rail-collapsed {
+  --rail-w: 0px;
+}
+
+#app.rail-collapsed .brand,
+#app.rail-collapsed .rail {
+  display: none;
 }
 
 .brand {
@@ -170,11 +181,88 @@ body {
 }
 
 .view-body.split {
+  --pane-left: 290px;
+  --pane-right: 372px;
   display: grid;
-  grid-template-columns: 290px 1fr 372px;
+  grid-template-columns: var(--pane-left) 1fr var(--pane-right);
   gap: 0;
   padding: 0;
   overflow: hidden;
+}
+
+/* 收起时只留一条竖着的窄条，展开按钮仍在原地，随时能点回来 */
+.view-body.split.left-collapsed {
+  --pane-left: 34px;
+}
+
+.view-body.split.right-collapsed {
+  --pane-right: 34px;
+}
+
+.pane.collapsed {
+  padding: 0;
+  overflow: hidden;
+}
+
+.pane.collapsed > :not(.pane-strip) {
+  display: none;
+}
+
+.pane-strip {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding-top: 10px;
+  background: var(--bg-1);
+}
+
+.pane-strip .strip-label {
+  writing-mode: vertical-rl;
+  font-size: 11.5px;
+  color: var(--fg-faint);
+  letter-spacing: 0.1em;
+}
+
+.pane-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.pane-head h3 {
+  margin: 0;
+}
+
+.pane-toggle,
+.rail-toggle {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg-2);
+  color: var(--fg-dim);
+  cursor: pointer;
+  font: 13px/1 var(--mono);
+}
+
+.pane-toggle:hover,
+.rail-toggle:hover {
+  border-color: var(--accent);
+  color: var(--fg);
+}
+
+.rail-toggle {
+  width: 28px;
+  height: 28px;
 }
 
 .pane {
@@ -479,6 +567,8 @@ table.grid tr:hover td {
   border-radius: 8px;
   overflow: auto;
   background: var(--bg-1);
+  /* 自带滚动条：视图把目标行滚进视野时只动这里，不动整个页面 */
+  max-height: 340px;
 }
 
 .src .ln {
@@ -906,4 +996,62 @@ table.grid tr:hover td {
   color: var(--fg-dim);
   font-family: var(--mono);
   font-size: 11.5px;
+}
+
+
+/* ---- 图框 ----
+   固定的显示区域，SVG 用 preserveAspectRatio="xMidYMid meet" 缩放到框内。
+   图的尺寸不再随播放步数变化，所以画面不会跳。 */
+.diagram-frame {
+  height: clamp(320px, 52vh, 680px);
+  /* 时序图偏长，框给高一些，否则宽屏下会被压得读不清 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.diagram-frame > svg {
+  width: 100%;
+  height: 100%;
+}
+
+.diagram-frame.tall {
+  height: clamp(360px, 68vh, 900px);
+}
+
+/* 图例浮在图框内，不占纵向空间 */
+.pane-overlay {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  max-width: calc(100% - 20px);
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-1) 88%, transparent);
+  backdrop-filter: blur(2px);
+}
+
+.pane-overlay.legend {
+  gap: 10px;
+}
+
+.pane-topbar {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-1) 88%, transparent);
+  backdrop-filter: blur(2px);
+  font-size: 12px;
+  color: var(--fg-dim);
 }

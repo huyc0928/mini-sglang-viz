@@ -241,6 +241,15 @@ export interface SourceBlockOptions {
   focusLine?: number;
 }
 
+/** 把块内标记了 data-focus 的行滚到可视区中间。
+ *  只改这个元素自己的 scrollTop，不碰页面滚动位置——否则每走一步整个视图都会跳。 */
+export function focusInto(box: HTMLElement): void {
+  const row = box.querySelector<HTMLElement>("[data-focus]");
+  if (!row) return;
+  const target = row.offsetTop - box.clientHeight / 2 + row.clientHeight / 2;
+  box.scrollTop = Math.max(0, target);
+}
+
 /** 渲染一段带行号与高亮的源码 */
 export function sourceBlock(lines: SourceLine[], path: string, opts: SourceBlockOptions = {}): HTMLElement {
   const hl = new Highlighter(langFor(path));

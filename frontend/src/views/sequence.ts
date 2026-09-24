@@ -2,12 +2,12 @@
 
 import { api } from "../api";
 import { clear, el, svg } from "../lib/dom";
-import { sourceBlock } from "../lib/hl";
+import { focusInto, sourceBlock } from "../lib/hl";
 import { mountHead } from "../lib/view";
 import type { Content, Flow, SymbolDetail } from "../types";
 import type { View, ViewContext } from "./types";
 
-const ROW_H = 54;
+const ROW_H = 38;
 const TOP = 42;
 const ACTOR_H = 30;
 const MARGIN = 80;
@@ -40,9 +40,11 @@ async function renderSequence(ctx: ViewContext): Promise<void> {
 
   const detailCache = new Map<string, SymbolDetail | null>();
 
-  const flowCards = el("div", { class: "cards", style: "grid-template-columns:repeat(auto-fill,minmax(240px,1fr))" });
+  // 流程选择做成下拉 + 一行摘要，比一排卡片省下两百多像素的纵向空间
+  const flowSel = el("select", { style: "max-width:420px" }) as HTMLSelectElement;
+  const flowSummary = el("div", { class: "dim", style: "font-size:12.5px;margin-top:6px;max-width:100ch" });
   const timeline = el("div", { class: "timeline" });
-  const diagramBox = el("div");
+  const diagramBox = el("div", { class: "diagram-frame tall" });
   const stepBox = el("div", { style: "margin-top:14px" });
   const sourceBox = el("div", { style: "margin-top:10px" });
 
@@ -52,30 +54,25 @@ async function renderSequence(ctx: ViewContext): Promise<void> {
   const jumpInput = el("input", { type: "number", min: "1", style: "width:88px" }) as HTMLInputElement;
   const jumpBtn = el("button", { class: "btn", text: "跳转", onclick: () => go(Number(jumpInput.value) - 1) });
 
-  const controls = el("div", { class: "row", style: "margin:12px 0" }, prevBtn, nextBtn, playBtn, el("span", { class: "faint", text: "跳到第" }), jumpInput, el("span", { class: "faint", text: "步" }), jumpBtn);
+  flowSel.addEventListener("change", () => {
+    const f = flows.find((x) => x.id === flowSel.value);
+    if (f) selectFlow(f);
+  });
 
-  root.append(flowCards, controls, timeline, diagramBox, stepBox, sourceBox);
+  const controls = el("div", { class: "row", style: "margin:10px 0" }, prevBtn, nextBtn, playBtn, el("span", { class: "faint", text: "跳到第" }), jumpInput, el("span", { class: "faint", text: "步" }), jumpBtn);
+
+  root.append(el("div", { class: "row" }, el("span", { class: "faint", text: "流程：" }), flowSel), flowSummary, controls, timeline, diagramBox, stepBox, sourceBox);
 
   function renderFlowCards(): void {
-    clear(flowCards);
+    clear(flowSel);
     for (const f of flows) {
-      flowCards.append(
-        el(
-          "div",
-          {
-            class: `card${f.id === flow.id ? " active" : ""}`,
-            style: `cursor:pointer;${f.id === flow.id ? "border-color:var(--accent)" : ""}`,
-            onclick: () => selectFlow(f),
-          },
-          el("h4", { text: f.title }),
-          el("p", { style: "font-size:12.5px", text: f.summary }),
-          el("div", { class: "row tight" },
-            el("span", { class: "pill", text: `${f.steps.length} 步` }),
-            el("span", { class: "pill", text: `${f.actors.length} 角色` }),
-          ),
-        ),
-      );
+      flowSel.append(el("option", { value: f.id, text: `${f.title}（${f.steps.length} 步 · ${f.actors.length} 角色）` }));
     }
+    flowSel.value = flow.id;
+    clear(flowSummary);
+    flowSummary.append(
+      el("span", { text: flow.summary }),
+    );
   }
 
   function selectFlow(f: Flow): void {
@@ -136,9 +133,10 @@ async function renderSequence(ctx: ViewContext): Promise<void> {
     const height = TOP + ACTOR_H + 20 + flow.steps.length * ROW_H + 30;
     const xs = actors.map((_, i) => (actors.length === 1 ? width / 2 : MARGIN + (i * (width - 2 * MARGIN)) / (actors.length - 1)));
     const idx = new Map(actors.map((a, i) => [a, i]));
+    // 尺寸只由流程决定，与当前步无关；放在固定框里缩放铺满，播放时不会移动
     const canvas = svg("svg", {
       viewBox: `0 0 ${width} ${height}`,
-      style: "width:100%;height:auto;background:var(--bg-1);border:1px solid var(--line);border-radius:10px",
+      preserveAspectRatio: "xMidYMid meet",
     });
     canvas.append(
       svg("defs", {}, svg("marker", { id: "arrow", viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "7", markerHeight: "7", orient: "auto-start-reverse" },
@@ -245,14 +243,13 @@ async function renderSequence(ctx: ViewContext): Promise<void> {
         el("span", { class: "faint", text: "点击跳到源码视图" }),
       ),
     );
-    sourceBox.append(
-      sourceBlock(src.lines, sym.file, {
-        highlight: [[sym.lineno, sym.end_lineno]],
-        onLineClick: (n) => ctx.navigate(ctx.sourceRoute(sym.file, n)),
-        focusLine: sym.lineno,
-      }),
-    );
-    sourceBox.querySelector<HTMLElement>("[data-focus]")?.scrollIntoView({ block: "center" });
+    const block = sourceBlock(src.lines, sym.file, {
+      highlight: [[sym.lineno, sym.end_lineno]],
+      onLineClick: (n) => ctx.navigate(ctx.sourceRoute(sym.file, n)),
+      focusLine: sym.lineno,
+    });
+    sourceBox.append(block);
+    focusInto(block);
   }
 
   function render(): void {

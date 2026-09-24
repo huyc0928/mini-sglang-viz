@@ -37,6 +37,10 @@ export function el<K extends keyof HTMLElementTagNameMap>(
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
+/** fit 的缩放区间。下限保证文字可读，上限避免小图被放得过大。 */
+const MIN_K = 0.85;
+const MAX_K = 1.8;
+
 export function svg<K extends keyof SVGElementTagNameMap>(
   tag: K,
   attrs: Record<string, AttrValue> = {},
@@ -75,7 +79,7 @@ export interface PanZoom {
   node: SVGSVGElement;
   /** 当前视图变换，视图可读取以做坐标换算 */
   transform(): { x: number; y: number; k: number };
-  fit(bounds: { x: number; y: number; w: number; h: number }): void;
+  fit(bounds: { x: number; y: number; w: number; h: number }, focus?: { x: number; y: number }): void;
   centerOn(x: number, y: number): void;
   setTransform(x: number, y: number, k: number): void;
 }
@@ -145,12 +149,23 @@ export function makePanZoom(width: number, height: number): PanZoom {
       k = nk;
       apply();
     },
-    fit(bounds) {
-      const pad = 24;
-      const kk = Math.min((width - pad * 2) / bounds.w, (height - pad * 2) / bounds.h, 1.6);
-      k = Math.max(0.15, kk);
-      x = (width - bounds.w * k) / 2 - bounds.x * k;
-      y = (height - bounds.h * k) / 2 - bounds.y * k;
+    /**
+     * 让图铺满画面。
+     * 缩放夹在 [0.85, 1.8]：低于 0.85 时文字小到读不了，这时宁可让图溢出画面
+     * （可以拖动查看），也不把整张大图压进一屏；高于 1.8 的小图则不必放得太大。
+     * 缩放被抬起来时以 focus（通常是当前根节点）为中心，保证一进来就看见它。
+     */
+    fit(bounds, focus) {
+      const pad = 10;
+      const kk = Math.min((width - pad * 2) / bounds.w, (height - pad * 2) / bounds.h);
+      k = Math.min(MAX_K, Math.max(MIN_K, kk));
+      if (kk < MIN_K && focus) {
+        x = width / 2 - focus.x * k;
+        y = height / 2 - focus.y * k;
+      } else {
+        x = (width - bounds.w * k) / 2 - bounds.x * k;
+        y = (height - bounds.h * k) / 2 - bounds.y * k;
+      }
       apply();
     },
     centerOn(cx, cy) {

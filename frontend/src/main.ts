@@ -10,6 +10,26 @@ const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) throw new Error("缺少 #app 容器");
 
 const rail = el("nav", { class: "rail" });
+
+const RAIL_KEY = "viz.rail.collapsed";
+
+function setRailCollapsed(collapsed: boolean): void {
+  app!.classList.toggle("rail-collapsed", collapsed);
+  railToggle.textContent = collapsed ? "»" : "«";
+  railToggle.title = collapsed ? "展开侧栏" : "收起侧栏";
+  railToggle.setAttribute("aria-expanded", String(!collapsed));
+  try {
+    window.localStorage.setItem(RAIL_KEY, collapsed ? "1" : "0");
+  } catch {
+    /* 隐私模式下写不了，忽略 */
+  }
+}
+
+const railToggle = el("button", {
+  class: "rail-toggle",
+  type: "button",
+  onclick: () => setRailCollapsed(!app!.classList.contains("rail-collapsed")),
+});
 const topbar = el("header", { class: "topbar" });
 const main = el("main", { class: "main" });
 let active: View | undefined;
@@ -24,7 +44,16 @@ function currentRoute(): { path: string; params: URLSearchParams } {
 export function navigate(route: string): void {
   const next = route.startsWith("#") ? route : `#/${route}`;
   if (window.location.hash === next) {
-    void mount();
+    // 恢复上次的侧栏状态
+let railCollapsed = false;
+try {
+  railCollapsed = window.localStorage.getItem(RAIL_KEY) === "1";
+} catch {
+  railCollapsed = false;
+}
+setRailCollapsed(railCollapsed);
+
+void mount();
     return;
   }
   window.location.hash = next;
@@ -158,6 +187,7 @@ const searchPop = el("div", {
 });
 topbar.style.position = "relative";
 topbar.append(
+  railToggle,
   el("span", { class: "faint", text: "mini-sglang" }),
   searchInput,
   searchPop,
@@ -186,5 +216,14 @@ app.append(
   rail,
   main,
 );
+
+// 恢复上次的侧栏状态
+let railCollapsed = false;
+try {
+  railCollapsed = window.localStorage.getItem(RAIL_KEY) === "1";
+} catch {
+  railCollapsed = false;
+}
+setRailCollapsed(railCollapsed);
 
 void mount();

@@ -23,7 +23,10 @@ const dom = new JSDOM("<!doctype html><html><body><div id='app'></div></body></h
 });
 const { window } = dom;
 // jsdom 不实现滚动相关的 API，视图会用它们把目标行滚进视野
-window.Element.prototype.scrollIntoView = function scrollIntoView() {};
+let scrollCalls = 0;
+window.Element.prototype.scrollIntoView = function scrollIntoView() {
+  scrollCalls += 1;
+};
 window.HTMLElement.prototype.scrollIntoView = function scrollIntoView() {};
 window.scrollTo = () => {};
 globalThis.window = window;
@@ -74,6 +77,31 @@ function clickAll(root, selector, limit = 6) {
   const items = [...root.querySelectorAll(selector)].slice(0, limit);
   for (const el of items) el.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
   return items.length;
+}
+
+/** 临时让所有元素报告同一个尺寸，用来检查「图是否铺满面板」。jsdom 没有排版，
+ *  不给尺寸的话视图会走兜底值，测不到真实路径。 */
+async function withPaneSize(w, h, fn) {
+  const proto = window.HTMLElement.prototype;
+  const descW = Object.getOwnPropertyDescriptor(proto, "clientWidth");
+  const descH = Object.getOwnPropertyDescriptor(proto, "clientHeight");
+  Object.defineProperty(proto, "clientWidth", { configurable: true, get: () => w });
+  Object.defineProperty(proto, "clientHeight", { configurable: true, get: () => h });
+  try {
+    return await fn();
+  } finally {
+    if (descW) Object.defineProperty(proto, "clientWidth", descW);
+    else delete proto.clientWidth;
+    if (descH) Object.defineProperty(proto, "clientHeight", descH);
+    else delete proto.clientHeight;
+  }
+}
+
+/** 从 panzoom-layer 的 transform 里取出缩放倍数 */
+function panZoomScale(root) {
+  const t = root.querySelector(".panzoom-layer")?.getAttribute("transform") ?? "";
+  const m = /scale\(([-\d.]+)\)/.exec(t);
+  return m ? Number.parseFloat(m[1]) : Number.NaN;
 }
 
 async function settle(ms = 350) {
@@ -196,6 +224,25 @@ async function testCallgraph() {
   void before;
   // 未解析调用应当被标注，而不是伪装成调用
   check(/未解析|unresolved/.test(text(root)), "调用链：列出了未解析调用");
+
+  // 图要铺满面板：画布的视口单位应与面板像素 1:1，缩放倍数不应被压到很小
+  await withPaneSize(830, 460, async () => {
+    const { root: r } = await renderView(callgraphView, { symbol: "minisgl.scheduler.scheduler.Scheduler.overlap_loop", depth: "2" });
+    const vb = r.querySelector("svg.canvas")?.getAttribute("viewBox") ?? "";
+    check(vb === "0 0 830 460", `调用链：画布视口跟住面板像素（${vb}）`);
+    const k = panZoomScale(r);
+    // 下限是 fit() 里的可读性保证：层特别多的图也不会被压到读不出来
+    check(k >= 0.85, `调用链：8 层 22 节点的图缩放倍数 ${Number.isNaN(k) ? "无法解析" : k.toFixed(2)}（下限 0.85）`);
+    notes.push(`  数据  调用链：22 节点下的缩放倍数 ${Number.isNaN(k) ? "?" : k.toFixed(2)}`);
+  });
+
+  // 默认入口的图更小，应当能放到 1 倍以上
+  await withPaneSize(830, 460, async () => {
+    const { root: r } = await renderView(callgraphView, {});
+    const k = panZoomScale(r);
+    check(k >= 0.95, `调用链：默认入口缩放倍数 ${Number.isNaN(k) ? "无法解析" : k.toFixed(2)}（应 ≥ 0.95）`);
+    notes.push(`  数据  调用链：默认入口的缩放倍数 ${Number.isNaN(k) ? "?" : k.toFixed(2)}`);
+  });
 }
 
 // ============================================================ 数据结构
@@ -254,6 +301,35 @@ async function testSequence() {
     check(/API Server|Scheduler|detokenizer|tokenize/.test(t), "时序：当前步面板显示了内容");
     check(/\.py/.test(t), "时序：显示了对应源码的文件路径");
   }
+
+  // 播放时画面不能跳：图框里的 SVG 尺寸必须与步数无关，且不得改动页面滚动
+  const frame = root.querySelector(".diagram-frame");
+  check(!!frame, "时序：图放在固定尺寸的图框里");
+  const before = frame?.querySelector("svg")?.getAttribute("viewBox") ?? "";
+  const scrollBefore = scrollCalls;
+  if (nextBtn) {
+    for (let i = 0; i < 6 && !nextBtn.disabled; i++) {
+      nextBtn.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+      await settle(200);
+    }
+  }
+  const after = frame?.querySelector("svg")?.getAttribute("viewBox") ?? "";
+  check(before !== "" && before === after, `时序：推进 6 步后 viewBox 不变（${before}）`);
+
+  // 图铺满图框：preserveAspectRatio=meet 下缩放取两方向的较小值
+  await withPaneSize(1500, 760, async () => {
+    const { root: r } = await renderView(sequenceView, { flow: "online-request" });
+    const svgEl = r.querySelector(".diagram-frame svg");
+    const vb = (svgEl?.getAttribute("viewBox") ?? "").split(/\s+/).map(Number);
+    if (vb.length === 4) {
+      const k = Math.min(1500 / vb[2], 760 / vb[3]);
+      check(k >= 0.95, `时序：图在 1500×760 框内的缩放倍数 ${k.toFixed(2)}（应 ≥ 0.95）`);
+      notes.push(`  数据  时序：在线请求流程的缩放倍数 ${k.toFixed(2)}（viewBox ${vb[2]}×${vb[3]}）`);
+    } else {
+      problems.push("时序：无法读取图框里 SVG 的 viewBox");
+    }
+  });
+  check(scrollCalls === scrollBefore, `时序：推进过程没有滚动页面（scrollIntoView 调用 ${scrollCalls - scrollBefore} 次）`);
   // 切换流程
   const flowCards = root.querySelectorAll(".item, .card");
   if (flowCards.length > 1) {
@@ -275,6 +351,21 @@ async function testSimulator() {
 
   const nextBtn = [...root.querySelectorAll("button")].find((b) => /下一步|下一/.test(b.textContent ?? ""));
   check(!!nextBtn, "模拟器：有下一步按钮");
+  // 记下第一步之后的树画布尺寸，作为后续比对基准
+  let treeBoxViewBox = "";
+  if (nextBtn) {
+    nextBtn.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    await settle(200);
+    treeBoxViewBox = root.querySelector(".diagram-frame svg")?.getAttribute("viewBox") ?? "";
+    check(treeBoxViewBox !== "", "模拟器：树画布有固定 viewBox");
+    const vb = treeBoxViewBox.split(/\s+/).map(Number);
+    if (vb.length === 4) {
+      // 模拟器是两栏布局，右栏约 790px 宽
+      const k = Math.min(790 / vb[2], 560 / vb[3]);
+      check(k >= 0.9, `模拟器：树在右栏的缩放倍数 ${k.toFixed(2)}（应 ≥ 0.9）`);
+      notes.push(`  数据  模拟器：树的缩放倍数 ${k.toFixed(2)}（viewBox ${vb[2]}×${vb[3]}）`);
+    }
+  }
   if (nextBtn) {
     // 走完整个脚本，任何一步出现 error-box 都算失败
     let sawError = false;
@@ -289,6 +380,11 @@ async function testSimulator() {
       }
     }
     check(!sawError, "模拟器：24 步走完没有出现算法报错");
+    const frame = root.querySelector(".diagram-frame");
+    const treeBefore = treeBoxViewBox;
+    const treeAfter = frame?.querySelector("svg")?.getAttribute("viewBox") ?? "";
+    check(treeBefore !== "" && treeBefore === treeAfter, `模拟器：走完 24 步后树画布的 viewBox 不变（${treeAfter}）`);
+    check(scrollCalls === 0, `模拟器：全程没有滚动页面（scrollIntoView 调用 ${scrollCalls} 次）`);
     check(/空闲 5 页 \+ 缓存 3 页 == 总 8 页/.test(t.replace(/\s+/g, " ")), "模拟器：收尾的完整性检查通过");
     check(!/完整性检查失败/.test(t), "模拟器：全程没有出现「检查失败」文案");
     check(/insert_prefix|evict|lock_handle|complete_one/.test(t), "模拟器：显示了当前步对应的源码");
@@ -322,6 +418,83 @@ async function testSource() {
   check(root.querySelectorAll(".src .gutter").length > 10, "源码：行号可点击");
 }
 
+// ============================================================ 折叠：侧栏与两栏
+async function testShellCollapse() {
+  // 外壳挂在 #app 上，用一个独立的 DOM 实例跑，避免干扰前面的视图测试
+  const shell = new JSDOM("<!doctype html><html><body><div id='app'></div></body></html>", {
+    url: `${BASE}/`,
+    pretendToBeVisual: true,
+  });
+  const saved = { window: globalThis.window, document: globalThis.document, HTMLElement: globalThis.HTMLElement };
+  const w = shell.window;
+  Object.assign(globalThis, { window: w, document: w.document, HTMLElement: w.HTMLElement, Element: w.Element, Node: w.Node, SVGElement: w.SVGElement, Event: w.Event, CustomEvent: w.CustomEvent });
+  w.fetch = globalThis.fetch;
+  w.Element.prototype.scrollIntoView = () => {};
+  w.HTMLElement.prototype.scrollIntoView = () => {};
+  try {
+    await import(`../.tmp/shell.mjs?run=${Date.now()}`);
+    await settle(300);
+    const app = w.document.querySelector("#app");
+    const rail = w.document.querySelector(".rail");
+    const toggle = w.document.querySelector(".rail-toggle");
+    check(!!app && !!rail && !!toggle, "侧栏：外壳与收起按钮都在");
+    check(rail.querySelectorAll("button").length >= 6, `侧栏：${rail.querySelectorAll("button").length} 个视图入口`);
+    check(!app.classList.contains("rail-collapsed"), "侧栏：初始是展开的");
+
+    toggle.dispatchEvent(new w.MouseEvent("click", { bubbles: true }));
+    check(app.classList.contains("rail-collapsed"), "侧栏：点一下收起");
+    check(toggle.getAttribute("aria-expanded") === "false", "侧栏：按钮的无障碍状态跟着更新");
+    const label = toggle.textContent;
+    check(label === "»", `侧栏：收起后按钮变成展开箭头（${label}）`);
+
+    toggle.dispatchEvent(new w.MouseEvent("click", { bubbles: true }));
+    check(!app.classList.contains("rail-collapsed"), "侧栏：再点一下展开");
+
+    // 收起状态要能跨刷新保持
+    toggle.dispatchEvent(new w.MouseEvent("click", { bubbles: true }));
+    const stored = w.localStorage.getItem("viz.rail.collapsed");
+    check(stored === "1", `侧栏：收起状态写入 localStorage（${stored}）`);
+  } finally {
+    Object.assign(globalThis, saved);
+  }
+}
+
+async function testPaneCollapse() {
+  const { root } = await renderView(callgraphView, {});
+  const leftPane = root.querySelectorAll(".pane")[0];
+  const rightPane = root.querySelectorAll(".pane")[2];
+  const toggles = [...root.querySelectorAll(".pane-toggle")];
+  check(toggles.length === 4, `两栏：共 ${toggles.length} 个收起按钮（每栏两个：标题栏与窄条）`);
+
+  const leftHead = leftPane.querySelector(".pane-head .pane-toggle");
+  const leftStrip = leftPane.querySelector(".pane-strip .pane-toggle");
+  check(!!leftHead && !!leftStrip, "两栏：左栏的标题栏与窄条上各有一个按钮");
+
+  leftHead.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await settle(200);
+  check(root.classList.contains("left-collapsed"), "两栏：左栏可收起");
+  check(leftPane.classList.contains("collapsed"), "两栏：左栏内容被标记为收起");
+  // jsdom 不加载外部样式表，所以这里核对的是「隐藏机制的两半都在」：
+  // 一是收起类挂在面板上，二是 styles.css 里确实有对应的隐藏规则。
+  const css = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
+  check(/\.pane\.collapsed\s*>\s*:not\(\.pane-strip\)\s*\{[^}]*display:\s*none/.test(css),
+    "两栏：styles.css 里有「收起后隐藏非窄条内容」的规则");
+  check(leftPane.querySelectorAll(".item").length > 0,
+    "两栏：收起后左栏内容仍在 DOM 里（展开即恢复，不用重新加载）");
+  check(leftPane.contains(leftStrip), "两栏：收起后窄条上的按钮仍在左栏里，可以点回来");
+
+  leftStrip.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await settle(200);
+  check(!root.classList.contains("left-collapsed"), "两栏：窄条按钮可以展开回来");
+
+  const rightHead = rightPane.querySelector(".pane-head .pane-toggle");
+  rightHead.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await settle(200);
+  check(root.classList.contains("right-collapsed"), "两栏：右栏可收起");
+  const detailText = rightPane.textContent ?? "";
+  check(detailText.length > 0, "两栏：收起右栏后详情内容仍在 DOM 里（展开即恢复，不用重新加载）");
+}
+
 const tests = [
   ["总览", testOverview],
   ["调用链追踪器", testCallgraph],
@@ -329,6 +502,8 @@ const tests = [
   ["时序回放", testSequence],
   ["KV/Radix 模拟器", testSimulator],
   ["源码浏览器", testSource],
+  ["侧栏折叠", testShellCollapse],
+  ["两栏折叠", testPaneCollapse],
 ];
 
 let failed = 0;

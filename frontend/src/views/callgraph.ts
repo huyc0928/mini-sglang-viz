@@ -8,10 +8,16 @@ import { mountHead } from "../lib/view";
 import type { FileMeta, Graph, GraphNode, Neighbor, SymbolDetail } from "../types";
 import type { View, ViewContext } from "./types";
 
-const NODE_W = 176;
-const NODE_H = 42;
-const CANVAS_W = 1400;
-const CANVAS_H = 900;
+const NODE_W = 144;
+const NODE_H = 44;
+// 层间距取小：横向是层数乘出来的，收窄它才能让层多的图也铺满面板
+const GAP_X = 28;
+const GAP_Y = 22;
+// 画布兜底尺寸。正常情况下按面板的像素尺寸建画布：视口单位与 CSS 像素 1:1，
+// fit() 算出的缩放就是真实缩放。若固定成一个大 viewBox，CSS 会先缩一次，
+// fit 再缩一次，两次叠起来图会小到看不清。
+const CANVAS_FALLBACK_W = 900;
+const CANVAS_FALLBACK_H = 560;
 
 const ENTRY_POINTS: { id: string; label: string }[] = [
   { id: "minisgl.scheduler.scheduler.Scheduler.run_forever", label: "Scheduler.run_forever" },
@@ -47,8 +53,12 @@ export const callgraphView: View = {
       window.clearTimeout(searchTimer);
       searchTimer = undefined;
     }
+    paneResizeObserver?.disconnect();
+    paneResizeObserver = null;
   },
 };
+
+let paneResizeObserver: ResizeObserver | null = null;
 
 async function renderCallgraph(ctx: ViewContext): Promise<void> {
   const { root } = ctx;
@@ -59,6 +69,57 @@ async function renderCallgraph(ctx: ViewContext): Promise<void> {
   );
   root.classList.add("split");
 
+  // ---- 左右两栏可收起：收起后只留一条窄条，按钮仍在原地 ----
+  const panes: Partial<Record<"left" | "right", HTMLElement>> = {};
+  const paneButtons: Record<"left" | "right", HTMLButtonElement[]> = { left: [], right: [] };
+  const PANE_NAME: Record<"left" | "right", string> = { left: "文件 / 模块", right: "符号详情" };
+
+  function paneToggleButton(side: "left" | "right"): HTMLButtonElement {
+    const btn = el("button", { class: "pane-toggle", type: "button" });
+    btn.addEventListener("click", () => setPaneCollapsed(side, !root.classList.contains(`${side}-collapsed`)));
+    paneButtons[side].push(btn);
+    return btn;
+  }
+
+  function paneHead(side: "left" | "right"): HTMLElement {
+    return el("div", { class: "pane-head" },
+      el("h3", { text: PANE_NAME[side] }),
+      paneToggleButton(side),
+    );
+  }
+
+  function paneStrip(side: "left" | "right"): HTMLElement {
+    return el("div", { class: "pane-strip" },
+      paneToggleButton(side),
+      el("span", { class: "strip-label", text: PANE_NAME[side] }),
+    );
+  }
+
+  function setPaneCollapsed(side: "left" | "right", collapsed: boolean): void {
+    root.classList.toggle(`${side}-collapsed`, collapsed);
+    panes[side]?.classList.toggle("collapsed", collapsed);
+    for (const btn of paneButtons[side]) {
+      btn.textContent = collapsed ? (side === "left" ? "»" : "«") : (side === "left" ? "«" : "»");
+      btn.title = collapsed ? `展开${PANE_NAME[side]}` : `收起${PANE_NAME[side]}`;
+      btn.setAttribute("aria-expanded", String(!collapsed));
+    }
+    try {
+      window.localStorage.setItem(`viz.pane.${side}`, collapsed ? "1" : "0");
+    } catch {
+      /* 写不了就算了，只影响下次打开时的状态 */
+    }
+  }
+
+  function storedPaneState(side: "left" | "right"): boolean {
+    try {
+      return window.localStorage.getItem(`viz.pane.${side}`) === "1";
+    } catch {
+      return false;
+    }
+  }
+
+  let lastPaneW = 0;
+  let lastPaneH = 0;
   let rootId = ctx.params.get("symbol") ?? ENTRY_POINTS[0].id;
   let depth = Number(ctx.params.get("depth") ?? "2") || 2;
   let direction = "both";
@@ -98,14 +159,18 @@ async function renderCallgraph(ctx: ViewContext): Promise<void> {
   const clearPathBtn = el("button", { class: "btn", text: "清除高亮", onclick: () => { pathState = null; pathToResults2.textContent = ""; void refreshGraph(); } });
   const pathToResults2 = el("div", { class: "dim", style: "font-size:12.5px" });
 
-  const presetRow = el("div", { class: "row tight" });
-  for (const p of ENTRY_POINTS) {
-    presetRow.append(el("button", { class: "btn", text: p.label, onclick: () => reroot(p.id) }));
-  }
+  // 预设入口放成下拉，比一排按钮省一整行高度
+  const presetSel = el("select") as HTMLSelectElement;
+  presetSel.append(el("option", { value: "", text: "选择入口…" }));
+  for (const p of ENTRY_POINTS) presetSel.append(el("option", { value: p.id, text: p.label }));
+  presetSel.addEventListener("change", () => {
+    if (presetSel.value) reroot(presetSel.value);
+    presetSel.value = "";
+  });
 
   head.append(
     el("div", { class: "row", style: "margin-top:10px" }, el("span", { class: "faint", text: "当前根：" }), rootLabel, depthSel, dirSel, resetBtn),
-    el("div", { class: "row tight", style: "margin-top:8px" }, el("span", { class: "faint", text: "入口：" }), presetRow),
+    el("div", { class: "row", style: "margin-top:8px" }, el("span", { class: "faint", text: "入口：" }), presetSel),
     el(
       "div",
       { class: "row", style: "margin-top:8px" },
@@ -117,12 +182,6 @@ async function renderCallgraph(ctx: ViewContext): Promise<void> {
       clearPathBtn,
     ),
     pathToResults,
-    el("div", { class: "legend", style: "margin-top:8px" }, [
-      el("span", {}, [el("i", { style: "background:var(--accent)" }), "节点左侧色条 = 所属模块"]),
-      el("span", {}, [el("i", { style: "background:var(--edge-resolved)" }), "实线 = 静态解析的调用"]),
-      el("span", {}, [el("i", { style: "background:var(--edge-inferred)" }), "虚线 = 类型推断的调用"]),
-      el("span", {}, [el("i", { style: "background:var(--edge-override)" }), "紫虚线 = 接口实现对应（非调用）"]),
-    ]),
     pathToResults2,
   );
 
@@ -132,9 +191,10 @@ async function renderCallgraph(ctx: ViewContext): Promise<void> {
   const left = el(
     "div",
     { class: "pane" },
-    el("h3", { text: "文件 / 模块" }),
+    paneHead("left"),
     fileQueryInput,
     fileList,
+    paneStrip("left"),
   );
 
   function renderTree(): void {
@@ -207,10 +267,26 @@ async function renderCallgraph(ctx: ViewContext): Promise<void> {
 
   // ---------------- 中：调用图 ----------------
   const center = el("div", { class: "pane center" });
+  // 画布按面板像素尺寸建，面板变大变小都要重画，否则缩放会失真
+  paneResizeObserver?.disconnect();
+  if (typeof ResizeObserver !== "undefined") {
+    const observer = new ResizeObserver(() => {
+      if (lastPaneW !== center.clientWidth || lastPaneH !== center.clientHeight) drawGraph();
+    });
+    observer.observe(center);
+    paneResizeObserver = observer;
+  }
   // ---------------- 右：详情 ----------------
-  const right = el("div", { class: "pane" }, el("h3", { text: "符号详情" }));
+  const detailBox = el("div");
+  const right = el("div", { class: "pane" }, paneHead("right"), detailBox, paneStrip("right"));
 
+  panes.left = left;
+  panes.right = right;
   root.append(left, center, right);
+
+  // 恢复上次的收起状态；图会由 ResizeObserver 在中间栏变宽后重画
+  setPaneCollapsed("left", storedPaneState("left"));
+  setPaneCollapsed("right", storedPaneState("right"));
 
   // ---------------- 数据加载 ----------------
   async function loadGraph(): Promise<void> {
@@ -218,13 +294,13 @@ async function renderCallgraph(ctx: ViewContext): Promise<void> {
   }
 
   async function loadDetail(id: string): Promise<void> {
-    clear(right);
-    right.append(el("h3", { text: "符号详情" }), el("p", { class: "loading", text: "加载中…" }));
+    clear(detailBox);
+    detailBox.append(el("p", { class: "loading", text: "加载中…" }));
     try {
       detail = await api.symbol(id);
     } catch (err) {
-      clear(right);
-      right.append(el("h3", { text: "符号详情" }), el("div", { class: "error-box", text: `加载失败：${err instanceof Error ? err.message : String(err)}` }));
+      clear(detailBox);
+      detailBox.append(el("div", { class: "error-box", text: `加载失败：${err instanceof Error ? err.message : String(err)}` }));
       return;
     }
     drawDetail();
@@ -281,11 +357,10 @@ async function renderCallgraph(ctx: ViewContext): Promise<void> {
   }
 
   function drawDetail(): void {
-    clear(right);
-    right.append(el("h3", { text: "符号详情" }));
+    clear(detailBox);
     if (!detail) return;
     const s = detail.symbol;
-    right.append(
+    detailBox.append(
       el("div", { class: "mono", style: "font-size:13.5px;margin-bottom:4px;word-break:break-word" }, [
         s.name,
         " ",
@@ -300,27 +375,27 @@ async function renderCallgraph(ctx: ViewContext): Promise<void> {
         }),
       ]),
     );
-    if (s.signature) right.append(el("pre", { class: "code", style: "max-height:150px;margin-bottom:8px", text: s.signature }));
+    if (s.signature) detailBox.append(el("pre", { class: "code", style: "max-height:150px;margin-bottom:8px", text: s.signature }));
     if (s.bases?.length) {
-      right.append(el("div", { class: "dim", style: "font-size:12.5px", text: `基类：${s.bases.join(", ")}` }));
+      detailBox.append(el("div", { class: "dim", style: "font-size:12.5px", text: `基类：${s.bases.join(", ")}` }));
     }
     if (s.decorators?.length) {
-      right.append(el("div", { class: "dim mono", style: "font-size:12px", text: s.decorators.map((d) => `@${d}`).join("  ") }));
+      detailBox.append(el("div", { class: "dim mono", style: "font-size:12px", text: s.decorators.map((d) => `@${d}`).join("  ") }));
     }
     if (s.docstring) {
-      right.append(el("p", { class: "dim", style: "font-size:12.5px;white-space:pre-wrap", text: s.docstring }));
+      detailBox.append(el("p", { class: "dim", style: "font-size:12.5px;white-space:pre-wrap", text: s.docstring }));
     }
     if (s.params.length) {
       const rows = s.params.map((p) =>
         el("tr", {}, el("td", { class: "mono", text: p.name }), el("td", { class: "mono", text: p.annotation || "—" }), el("td", { class: "mono faint", text: p.default || "—" })),
       );
-      right.append(
+      detailBox.append(
         el("div", { style: "margin-top:10px" }, el("h3", { text: "参数" }),
           el("table", { class: "grid" }, el("thead", {}, el("tr", {}, el("th", { text: "名" }), el("th", { text: "注解" }), el("th", { text: "默认" }))), el("tbody", {}, rows))),
       );
     }
-    right.append(neighborList("调用（callees）", detail.callees, "没有解析到下游调用。"));
-    right.append(neighborList("被调用（callers）", detail.callers, "没有解析到上游调用。"));
+    detailBox.append(neighborList("调用（callees）", detail.callees, "没有解析到下游调用。"));
+    detailBox.append(neighborList("被调用（callers）", detail.callers, "没有解析到上游调用。"));
     const un = s.unresolved ?? [];
     const ubox = el("div", { style: "margin-top:12px" }, el("h3", { text: "未解析调用（unresolved）" }));
     ubox.append(el("p", { class: "faint", style: "font-size:12px;margin:0 0 6px", text: "静态分析无法确定目标：可能是动态分派、回调、或被调方在运行时才绑定。" }));
@@ -338,7 +413,7 @@ async function renderCallgraph(ctx: ViewContext): Promise<void> {
       }
       ubox.append(ul);
     }
-    right.append(ubox);
+    detailBox.append(ubox);
   }
 
   // ---------------- 图渲染 ----------------
@@ -428,14 +503,33 @@ async function renderCallgraph(ctx: ViewContext): Promise<void> {
       text: `${disp.nodes.length} 节点 · ${disp.edges.length} 边${fileFilter ? ` · 仅 ${fileFilter}` : groupFilter ? ` · 仅 ${groupFilter}` : ""}${disp.truncated ? " · 已截断" : ""}`,
     });
     center.append(note);
+    center.append(
+      el("div", { class: "legend pane-overlay" }, [
+        el("span", {}, [el("i", { style: "background:var(--accent)" }), "左侧色条 = 所属模块"]),
+        el("span", {}, [el("i", { style: "background:var(--edge-resolved)" }), "实线 = 静态调用"]),
+        el("span", {}, [el("i", { style: "background:var(--edge-inferred)" }), "虚线 = 类型推断"]),
+        el("span", {}, [el("i", { style: "background:var(--edge-override)" }), "紫虚线 = 接口实现（非调用）"]),
+      ]),
+    );
     if (disp.nodes.length === 0) {
       center.append(el("div", { class: "empty", style: "padding-top:80px", text: fileFilter || groupFilter ? "该筛选下没有节点" : "没有可显示的节点" }));
       return;
     }
     const layers = computeLayers(disp.nodes, disp.edges);
-    const pos = layerLayout(layers, NODE_W, NODE_H, 96, 20);
+    const paneW = Math.max(320, center.clientWidth || CANVAS_FALLBACK_W);
+    const paneH = Math.max(260, center.clientHeight || CANVAS_FALLBACK_H);
+    lastPaneW = center.clientWidth;
+    lastPaneH = center.clientHeight;
+    // 层内间距按面板长宽比反算，让图在两个方向上都铺开
+    const maxRows = layers.reduce((m, l) => Math.max(m, l.length), 0);
+    const w0 = boundsOf(layerLayout(layers, NODE_W, NODE_H, GAP_X, GAP_Y).values(), NODE_W, NODE_H).w;
+    const wantH = w0 / (paneW / paneH);
+    const gapY = maxRows > 1
+      ? Math.min(150, Math.max(12, (wantH - maxRows * NODE_H) / (maxRows - 1)))
+      : GAP_Y;
+    const pos = layerLayout(layers, NODE_W, NODE_H, GAP_X, gapY);
     const b = boundsOf(pos.values(), NODE_W, NODE_H);
-    const pz = makePanZoom(CANVAS_W, CANVAS_H);
+    const pz = makePanZoom(paneW, paneH);
     center.append(pz.node);
     const layer = svg("g");
     pz.node.querySelector(".panzoom-layer")?.append(layer);
@@ -477,13 +571,14 @@ async function renderCallgraph(ctx: ViewContext): Promise<void> {
       g.append(
         svg("rect", { class: "box", width: NODE_W, height: NODE_H }),
         svg("rect", { x: 0, y: 0, width: 4, height: NODE_H, rx: 2, style: `fill:${hashColor(n.group)}` }),
-        svg("text", { x: 11, y: 17, text: truncate(n.name, 22) }),
+        svg("text", { x: 11, y: 17, text: truncate(n.name, 18) }),
         svg("text", { class: "sub", x: 11, y: 32, text: `${n.kind} · ${n.group}` }),
         svg("title", { text: `${n.id}\n${n.file}:${n.lineno}` }),
       );
       layer.append(g);
     }
-    pz.fit(b);
+    // 缩放不足以容下全图时，以当前根节点为中心显示
+    pz.fit(b, pos.get(rootId));
   }
 
   function highlightNeighbor(id: string): void {
