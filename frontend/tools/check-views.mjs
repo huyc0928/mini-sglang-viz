@@ -373,10 +373,69 @@ async function testSimulator() {
     check(treeBoxViewBox !== "", "模拟器：树画布有固定 viewBox");
     const vb = treeBoxViewBox.split(/\s+/).map(Number);
     if (vb.length === 4) {
-      // 模拟器是两栏布局，右栏约 790px 宽
-      const k = Math.min(790 / vb[2], 560 / vb[3]);
-      check(k >= 0.9, `模拟器：树在右栏的缩放倍数 ${k.toFixed(2)}（应 ≥ 0.9）`);
-      notes.push(`  数据  模拟器：树的缩放倍数 ${k.toFixed(2)}（viewBox ${vb[2]}×${vb[3]}）`);
+      // 图框高度由 aspect-ratio 推出，右栏约 790px 宽，所以缩放就是 790/vbW
+      const k = Math.min(790 / vb[2], 790 / vb[2]);
+      check(k >= 1.4, `模拟器：树在右栏的缩放倍数 ${k.toFixed(2)}（应 ≥ 1.4）`);
+      const frameAspect = root.querySelector(".diagram-frame")?.style.aspectRatio ?? "";
+      const want = (vb[2] / vb[3]).toFixed(3);
+      check(frameAspect.replace(/\s/g, "").startsWith(vb[2]), `模拟器：图框长宽比跟住画布（${frameAspect}）`);
+      void want;
+      notes.push(`  数据  模拟器：树 viewBox ${vb[2]}×${vb[3]}，缩放 ${k.toFixed(2)}，图框 ${frameAspect}`);
+    }
+
+    // 页表与物理页池的格子尺寸必须一致：靠共用 --cell 变量，不能有内联尺寸
+    const cells = [...root.querySelectorAll(".cell")];
+    const withInline = cells.filter((c) => c.style.width || c.style.height);
+    check(withInline.length === 0, `模拟器：${withInline.length} 个格子带内联尺寸（会导致两处不一致）`);
+    const grids = [...root.querySelectorAll(".grid-cells")].map((g) => g.getAttribute("style") ?? "");
+    const usingVar = grids.filter((g) => g.includes("var(--cell)"));
+    check(usingVar.length === grids.length, `模拟器：${usingVar.length}/${grids.length} 个网格用共同的格子尺寸`);
+    notes.push(`  数据  模拟器：格子数 ${cells.length}，全部走 var(--cell)`);
+
+    // 画布由「预演整段脚本量出的上限」定尺寸，所以要确认任何一步都没被裁掉
+    const insideAt = (host) => {
+      const svgEl = host.querySelector(".diagram-frame svg");
+      const box = (svgEl?.getAttribute("viewBox") ?? "").split(/\s+/).map(Number);
+      if (box.length !== 4) return "无法读取 viewBox";
+      let overflow = "";
+      for (const g of host.querySelectorAll(".diagram-frame g.node")) {
+        const m = /translate\(([-\d.]+)[ ,]+([-\d.]+)\)/.exec(g.getAttribute("transform") ?? "");
+        const rect = g.querySelector("rect");
+        if (!m || !rect) continue;
+        const w = Number.parseFloat(rect.getAttribute("width") ?? "0");
+        const h = Number.parseFloat(rect.getAttribute("height") ?? "0");
+        const x = Number.parseFloat(m[1]);
+        const y = Number.parseFloat(m[2]);
+        if (x < 0 || y < 0 || x + w > box[2] + 0.5 || y + h > box[3] + 0.5) {
+          overflow = `节点 (${x},${y}) ${w}×${h} 超出画布 ${box[2]}×${box[3]}`;
+          break;
+        }
+      }
+      return overflow;
+    };
+    let clipped = "";
+    for (let i = 0; i < 24 && !clipped; i++) {
+      clipped = insideAt(root);
+      if (clipped) break;
+      nextBtn.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+      await settle(60);
+    }
+    check(clipped === "", `模拟器：24 步内树都没有超出画布${clipped ? `（${clipped}）` : ""}`);
+
+    // 换 page_size 后要重新量画布，仍然不能裁掉内容
+    const pageSel = [...root.querySelectorAll("select")][0];
+    if (pageSel) {
+      pageSel.value = [...pageSel.options].map((o) => o.value).find((v) => v === "8") ?? "8";
+      pageSel.dispatchEvent(new window.Event("change", { bubbles: true }));
+      await settle(300);
+      let clipped8 = "";
+      for (let i = 0; i < 24 && !clipped8; i++) {
+        clipped8 = insideAt(root);
+        if (clipped8) break;
+        nextBtn.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+        await settle(50);
+      }
+      check(clipped8 === "", `模拟器：page_size=8 时 24 步内树也没有超出画布${clipped8 ? `（${clipped8}）` : ""}`);
     }
   }
   if (nextBtn) {

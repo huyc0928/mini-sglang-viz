@@ -25,6 +25,8 @@
   --k-inproc: #0e8a63;
   --k-zmq: #a86600;
   --k-nccl: #7a3fb0;
+  /* 页表与物理页池的格子边长，两处共用 */
+  --cell: 18px;
   --node-fill: #ffffff;
   --node-stroke: #c8d1dd;
   --node-fill-external: #f5f7fa;
@@ -768,8 +770,9 @@ table.grid tr:hover td {
 }
 
 .cell {
-  width: 15px;
-  height: 15px;
+  /* 页表与物理页池共用同一个尺寸，两处格子看起来一致 */
+  width: var(--cell);
+  height: var(--cell);
   border-radius: 3px;
   background: var(--bg-2);
   border: 1px solid #cfd7e2;
@@ -1032,6 +1035,12 @@ table.grid tr:hover td {
 .diagram-frame > svg {
   width: 100%;
   height: 100%;
+}
+
+/* 高度由长宽比推出，缩放时两个方向同时铺满，不留上下空白 */
+.diagram-frame.by-aspect {
+  height: auto;
+  min-height: 96px;
 }
 
 .diagram-frame.tall {

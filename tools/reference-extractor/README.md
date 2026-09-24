@@ -10,5 +10,5 @@
   当年用它验证 Python 版没写错，现在读起来仍是一份「我认为事实应该是什么」的清单。
 - `golden_diff.py` 是更细的差异报告器，`cargo test` 报出差异时可以用它定位到具体符号。
 
-运行环境不需要它：后端是纯 Rust，前端是 TypeScript。想删就直接删掉整个目录，
-`cargo test --test golden` 依赖的是 `backend/tests/golden/` 里的 JSON 快照，不是这些脚本。
+运行环境用不到它：后端是纯 Rust，前端是 TypeScript。`cargo test --test golden`
+依赖的是 `backend/tests/golden/` 里的 JSON 快照，删掉这个目录不影响任何检查。

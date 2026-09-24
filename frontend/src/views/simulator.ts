@@ -9,13 +9,11 @@ import { mountHead } from "../lib/view";
 import type { SimOp, SymbolDetail } from "../types";
 import type { View, ViewContext } from "./types";
 
-const NODE_W = 156;
-const NODE_H = 36;
-// 树的画布尺寸写死，不随树的大小变化。数值按脚本可能出现的最深层数与最多兄弟数留够：
-// 4 层 × 每层 3 个节点。viewBox 固定后，缩放比例也就固定了。
-// 宽度取 780 是为了配合模拟器两栏（各约 790px）的宽度，让树接近 1:1 显示。
-const TREE_VB_W = 780;
-const TREE_VB_H = 330;
+const NODE_W = 132;
+const NODE_H = 50;
+const PITCH_X = NODE_W + 48;
+const PITCH_Y = NODE_H + 30;
+const TREE_MARGIN = 14;
 
 let playTimer: number | undefined;
 
@@ -80,7 +78,7 @@ async function renderSimulator(ctx: ViewContext): Promise<void> {
 
   const readout = el("div", { class: "row", style: "gap:18px;margin:10px 0" });
   const gridBox = el("div");
-  const treeBox = el("div", { class: "diagram-frame" });
+  const treeBox = el("div", { class: "diagram-frame by-aspect" });
   const stepBox = el("div", { style: "margin-top:14px" });
   const sourceBox = el("div", { style: "margin-top:10px" });
 
@@ -106,6 +104,36 @@ async function renderSimulator(ctx: ViewContext): Promise<void> {
     sourceBox,
   );
 
+  // 预演整段脚本，量出树最多用到几层、每层最多几个节点。
+  // 画布尺寸由这个上限决定：既保证任何一步都不会被裁掉，又不会像原来那样
+  // 按「假想的 4 层 3 行」留出大片空白。
+  function measureExtent(): { levels: number; rows: number } {
+    const probe = new CacheSim(params);
+    probe.prime(params.ops);
+    let levels = 1;
+    let rows = 1;
+    const look = (): void => {
+      const per = new Map<number, number>();
+      for (const { depth } of probe.tree.nodes()) per.set(depth, (per.get(depth) ?? 0) + 1);
+      const keys = [...per.keys()];
+      levels = Math.max(levels, (keys.length ? Math.max(...keys) : 0) + 1);
+      rows = Math.max(rows, ...[...per.values()], 1);
+    };
+    look();
+    for (const op of params.ops) {
+      probe.runOp(op);
+      look();
+    }
+    return { levels, rows };
+  }
+
+  let extent = measureExtent();
+
+  /** 只有参数变化才需要重新量画布尺寸，播放每一步不必重算 */
+  function remeasure(): void {
+    extent = measureExtent();
+  }
+
   function rebuild(): void {
     sim = new CacheSim(params);
     sim.prime(params.ops);
@@ -130,6 +158,7 @@ async function renderSimulator(ctx: ViewContext): Promise<void> {
       max_running_req: Math.max(1, Number(maxReqInput.value) || scenario.params.max_running_req),
     };
     cursor = 0;
+    remeasure();
     rebuild();
     render();
   }
@@ -204,7 +233,8 @@ async function renderSimulator(ctx: ViewContext): Promise<void> {
   function renderGrid(): void {
     const s = sim.snapshot();
     clear(gridBox);
-    const grid = el("div", { class: "grid-cells", style: `grid-template-columns:34px repeat(${s.cols}, 15px)` });
+    // 格子尺寸与物理页池共用 --cell，两处看起来一样大；行高也锁定，避免被行标签撑开
+    const grid = el("div", { class: "grid-cells", style: `grid-template-columns:34px repeat(${s.cols}, var(--cell));grid-auto-rows:var(--cell)` });
     const hlCells = new Set((lastResult?.highlightCells ?? []).map((c) => `${c.row}:${c.col}`));
     const hlPages = new Set(lastResult?.highlightPages ?? []);
 
@@ -243,11 +273,11 @@ async function renderSimulator(ctx: ViewContext): Promise<void> {
         if (!usedPage.has(page)) usedPage.set(page, req.uid);
       }
     }
-    const strip = el("div", { class: "grid-cells", style: `grid-template-columns:repeat(${sim.numPages}, 18px)` });
+    const strip = el("div", { class: "grid-cells", style: `grid-template-columns:repeat(${sim.numPages}, var(--cell));grid-auto-rows:var(--cell)` });
     for (let p = 0; p < sim.numPages; p++) {
       const start = p * sim.pageSize;
       const free = sim.freeSlots.includes(start);
-      const cell = el("div", { class: "cell", style: "width:18px;height:18px" });
+      const cell = el("div", { class: "cell" });
       cell.title = `页 ${p}（token ${start}..${start + sim.pageSize - 1}）${free ? " · 空闲" : " · 已用"}`;
       if (free) cell.classList.add("free");
       else {
@@ -269,20 +299,19 @@ async function renderSimulator(ctx: ViewContext): Promise<void> {
       while (layers.length <= depth) layers.push([]);
       layers[depth].push(String(node.id));
     }
-    const maxRows = layers.reduce((m, l) => Math.max(m, l.length), 0);
-    const pitchY = (TREE_VB_H - NODE_H - 24) / Math.max(1, maxRows - 1 || 1);
-    const pitchX = (TREE_VB_W - NODE_W - 80) / Math.max(1, layers.length - 1 || 1);
+    // 画布按实测上限定尺寸。它只随参数变化，不随播放步数变化，
+    // 所以树的缩放比例恒定，播放时整个右侧不会上下跳。
+    const vbW = TREE_MARGIN * 2 + extent.levels * NODE_W + (extent.levels - 1) * (PITCH_X - NODE_W);
+    const vbH = TREE_MARGIN * 2 + extent.rows * NODE_H + (extent.rows - 1) * (PITCH_Y - NODE_H);
+    // 图框长宽比与画布一致，缩放才能两个方向都铺满，不留上下空白
+    treeBox.style.aspectRatio = `${vbW} / ${vbH}`;
     const pos = new Map<number, { x: number; y: number }>();
-    const spanX = (layers.length - 1) * pitchX;
-    const x0 = 40 + Math.max(0, (TREE_VB_W - 80 - NODE_W - spanX) / 2);
     layers.forEach((layer, li) => {
-      const spanY = (layer.length - 1) * pitchY;
-      const y0 = 12 + Math.max(0, (TREE_VB_H - 24 - NODE_H - spanY) / 2);
-      layer.forEach((id, ri) => pos.set(Number(id), { x: x0 + li * pitchX, y: y0 + ri * pitchY }));
+      const spanY = (layer.length - 1) * PITCH_Y;
+      const y0 = TREE_MARGIN + Math.max(0, (vbH - TREE_MARGIN * 2 - NODE_H - spanY) / 2);
+      layer.forEach((id, ri) => pos.set(Number(id), { x: TREE_MARGIN + li * PITCH_X, y: y0 + ri * PITCH_Y }));
     });
-    // 画布尺寸固定：树长大或缩小都不改 viewBox，否则缩放比例会跟着变，
-    // 节点文字一会儿大一会儿小，整个右侧也会上下跳。
-    const canvas = svg("svg", { viewBox: `0 0 ${TREE_VB_W} ${TREE_VB_H}`, preserveAspectRatio: "xMidYMid meet" });
+    const canvas = svg("svg", { viewBox: `0 0 ${vbW} ${vbH}`, preserveAspectRatio: "xMidYMid meet" });
     const hl = new Set(lastResult?.highlightNodes ?? []);
     const isNew = new Set(lastResult?.newNodes ?? []);
 
@@ -310,10 +339,12 @@ async function renderSimulator(ctx: ViewContext): Promise<void> {
         );
       }
       g.append(rect);
-      const label = isRoot ? "root" : `tok[${node.key[0]}…${node.key[node.key.length - 1]}] · len ${node.length}`;
-      g.append(svg("text", { x: 10, y: 15, text: label }));
-      const tag = isRoot ? "始终受保护" : node.ref > 0 ? `protected · ref=${node.ref}` : "evictable · ref=0";
-      g.append(svg("text", { class: "sub", x: 10, y: 29, text: tag }));
+      // 分三行：token 范围、长度、引用与可淘汰状态，单行都放得下
+      const span = isRoot ? "root" : `tok[${node.key[0]}…${node.key[node.key.length - 1]}]`;
+      g.append(svg("text", { x: 10, y: 16, text: span }));
+      g.append(svg("text", { class: "sub", x: 10, y: 31, text: isRoot ? "根节点" : `长度 ${node.length}` }));
+      const tag = isRoot ? "始终受保护" : node.ref > 0 ? `受保护 · ref=${node.ref}` : "可淘汰 · ref=0";
+      g.append(svg("text", { class: "sub", x: 10, y: 44, text: tag }));
       g.append(svg("title", { text: `${isRoot ? "根节点" : `key=[${node.key.join(", ")}]`}\nvalue=[${node.value.join(", ")}]\nref_count=${node.ref} 长度=${node.length}${isNew.has(node.id) ? "\n本次操作新建" : ""}` }));
       canvas.append(g);
     }
