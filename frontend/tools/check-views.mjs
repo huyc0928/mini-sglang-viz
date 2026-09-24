@@ -96,6 +96,77 @@ async function testOverview() {
   check(/建议|阅读/.test(t), "总览：包含建议阅读顺序");
   check(t.includes("scheduler") || t.includes("kvcache"), "总览：包含模块清单");
   if (problems.length === 0) clickAll(root, ".card, .item, details summary", 4);
+  checkTopologyGeometry(root);
+}
+
+/** 进程拓扑的几何自检：把渲染出来的坐标解析出来，证明节点与边徽标互不重叠。
+ *  这代替不了人眼看排版，但能证明「文字叠在一起」这类问题是几何上不可能的。 */
+function checkTopologyGeometry(root) {
+  const num = (el, attr) => {
+    const v = el.getAttribute(attr);
+    return v === null ? null : Number.parseFloat(v);
+  };
+  const pair = (el) => {
+    const m = /translate\(([-\d.]+)[ ,]+([-\d.]+)\)/.exec(el.getAttribute("transform") ?? "");
+    return m ? { x: Number.parseFloat(m[1]), y: Number.parseFloat(m[2]) } : null;
+  };
+
+  const nodes = [...root.querySelectorAll("g.topo-node")].map((g) => {
+    const p = pair(g);
+    const rect = g.querySelector("rect");
+    const w = num(rect, "width") ?? 0;
+    const h = num(rect, "height") ?? 0;
+    // 节点上的文字：标题与类型标注
+    const texts = [...g.querySelectorAll("text")].map((t) => t.textContent ?? "");
+    return { p, box: p ? { x: p.x, y: p.y, w, h } : null, texts };
+  });
+  check(nodes.length >= 8, `拓扑：节点 ${nodes.length} 个`);
+  const missing = nodes.filter((n) => !n.box);
+  check(missing.length === 0, "拓扑：每个节点都有坐标与尺寸");
+
+  // 边徽标：圆心坐标为 transform，半径取自 circle
+  const badges = [...root.querySelectorAll("g.topo-badge")].map((g) => {
+    const p = pair(g);
+    const r = num(g.querySelector("circle"), "r") ?? 9;
+    return p ? { x: p.x, y: p.y, r } : null;
+  }).filter(Boolean);
+  check(badges.length >= 8, `拓扑：边徽标 ${badges.length} 个`);
+  check(root.querySelectorAll(".topo-row").length === badges.length, "拓扑：下方的边列表与徽标数量一致");
+
+  const overlap = (a, b) =>
+    a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+
+  // 徽标不能压到节点框
+  let hitNode = 0;
+  for (const b of badges) {
+    const bb = { x: b.x - b.r, y: b.y - b.r, w: b.r * 2, h: b.r * 2 };
+    for (const n of nodes) if (n.box && overlap(bb, n.box)) hitNode++;
+  }
+  check(hitNode === 0, `拓扑：${hitNode} 个边徽标压到节点框上`);
+
+  // 徽标之间也不能重叠
+  let hitPair = 0;
+  for (let i = 0; i < badges.length; i++) {
+    for (let j = i + 1; j < badges.length; j++) {
+      const a = badges[i];
+      const b = badges[j];
+      if (Math.hypot(a.x - b.x, a.y - b.y) < a.r + b.r + 2) hitPair++;
+    }
+  }
+  check(hitPair === 0, `拓扑：${hitPair} 对边徽标互相重叠`);
+
+  // 节点文字不得超出框宽（按等宽 6px / 无衬线 6.6px 粗估）
+  let overflow = 0;
+  for (const n of nodes) {
+    if (!n.box) continue;
+    const [title = "", kind = "", bullet = ""] = n.texts;
+    const titleW = title.length * 6.8;
+    const kindW = kind.length * 6;
+    const bulletW = bullet.length * 6;
+    if (13 + titleW > n.box.w - 13) overflow++;
+    if (13 + kindW + bulletW + 12 > n.box.w - 13) overflow++;
+  }
+  check(overflow === 0, `拓扑：${overflow} 个节点的文字可能超出框宽`);
 }
 
 // ============================================================ 调用链追踪器

@@ -142,7 +142,7 @@ async function renderSequence(ctx: ViewContext): Promise<void> {
     });
     canvas.append(
       svg("defs", {}, svg("marker", { id: "arrow", viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "7", markerHeight: "7", orient: "auto-start-reverse" },
-        svg("path", { d: "M0,0 L10,5 L0,10 z", fill: "#556074" }))),
+        svg("path", { d: "M0,0 L10,5 L0,10 z", style: "fill:var(--edge-resolved)" }))),
     );
 
     // 角色框与生命线
@@ -164,7 +164,7 @@ async function renderSequence(ctx: ViewContext): Promise<void> {
       const g = svg("g", { class: `seq-msg${state}` });
       if (fi === ti) {
         const d = `M ${x1} ${y} C ${x1 + 68} ${y - 26}, ${x1 + 68} ${y + 20}, ${x1} ${y + 20}`;
-        const stroke = i === step ? "var(--accent-2)" : i < step ? "#45505f" : "#556074";
+        const stroke = i === step ? "var(--edge-hl)" : i < step ? "var(--fg-faint)" : "var(--edge-resolved)";
         const sw = i === step ? 2.4 : 1.4;
         g.append(svg("path", { d, fill: "none", "marker-end": "url(#arrow)", style: `stroke:${stroke};stroke-width:${sw}` }));
         g.append(svg("text", { x: x1 + 78, y: y + 2, text: s.label }));

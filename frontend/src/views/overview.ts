@@ -6,26 +6,37 @@ import { mountHead } from "../lib/view";
 import type { Content, ModuleOut, Stats } from "../types";
 import type { View, ViewContext } from "./types";
 
-const TOPO_W = 180;
-const TOPO_H = 64;
+const TOPO_W = 196;
+const TOPO_H = 62;
 
 /** 手工排布的进程拓扑坐标 */
 const TOPO_POS: Record<string, { x: number; y: number }> = {
-  client: { x: 20, y: 70 },
-  api: { x: 220, y: 20 },
-  frontend_mgr: { x: 220, y: 140 },
-  tokenizer: { x: 500, y: 20 },
-  detokenizer: { x: 500, y: 140 },
-  sched0: { x: 760, y: 20 },
-  schedN: { x: 760, y: 150 },
-  engine: { x: 1020, y: 20 },
+  client: { x: 16, y: 66 },
+  api: { x: 252, y: 14 },
+  frontend_mgr: { x: 252, y: 138 },
+  tokenizer: { x: 540, y: 14 },
+  detokenizer: { x: 540, y: 138 },
+  sched0: { x: 820, y: 14 },
+  schedN: { x: 820, y: 138 },
+  engine: { x: 1090, y: 14 },
 };
 
-const LINK_COLORS: Record<string, string> = {
-  http: "#6aa9ff",
-  inproc: "#7ee0c0",
-  zmq: "#ffb454",
-  nccl: "#c792ea",
+/** 节点标题：只留名字，副标题与说明走 tooltip 与下方列表 */
+const NODE_TITLE: Record<string, string> = {
+  client: "客户端",
+  api: "API Server",
+  frontend_mgr: "FrontendManager",
+  tokenizer: "tokenize worker",
+  detokenizer: "detokenizer worker",
+  sched0: "Scheduler rank0",
+  schedN: "Scheduler rank1..N-1",
+  engine: "Engine",
+};
+
+const KIND_LABEL: Record<string, string> = {
+  external: "外部",
+  process: "进程",
+  component: "进程内组件",
 };
 
 export const overviewView: View = {
@@ -43,7 +54,7 @@ async function renderOverview(ctx: ViewContext): Promise<void> {
 
   const [ov, content] = await Promise.all([api.overview(), api.content()]);
   renderStats(root, ov.stats);
-  root.append(sectionTitle("进程拓扑", "方框是进程或进程内组件，箭头是通信方式。点击带符号的节点可跳到调用链视图。"));
+  root.append(sectionTitle("进程拓扑", "方框是进程或进程内组件，箭头是通信方式。每条边的完整说明在图下方按编号列出，鼠标移上去两边一起高亮；点带符号的节点跳到调用链视图。"));
   root.append(renderTopology(content, ctx));
   root.append(sectionTitle("模块地图", "每个模块的代码量、入边与出边数量。点击卡片按模块筛选调用图。"));
   root.append(renderModules(ov.modules, ov.group_edges, ctx));
@@ -88,100 +99,145 @@ function renderStats(root: HTMLElement, s: Stats): void {
 
 function renderTopology(content: Content, ctx: ViewContext): HTMLElement {
   const topo = content.process_topology;
-  const W = 1240;
-  const H = 250;
+  const W = 1310;
+  const H = 216;
   const canvas = svg("svg", {
     viewBox: `0 0 ${W} ${H}`,
     style: "width:100%;height:auto;background:var(--bg-1);border:1px solid var(--line);border-radius:10px",
   });
   const defs = svg("defs");
-  for (const [kind, color] of Object.entries(LINK_COLORS)) {
+  for (const kind of ["http", "inproc", "zmq", "nccl"]) {
     defs.append(
       svg("marker", { id: `topo-${kind}`, viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "6", markerHeight: "6", orient: "auto-start-reverse" },
-        svg("path", { d: "M0,0 L10,5 L0,10 z", fill: color })),
+        svg("path", { d: "M0,0 L10,5 L0,10 z", style: `fill:var(--k-${kind})` })),
     );
   }
   canvas.append(defs);
 
-  const posOf = (id: string): { x: number; y: number } => TOPO_POS[id] ?? { x: 20, y: 20 };
+  const posOf = (id: string): { x: number; y: number } => TOPO_POS[id] ?? { x: 16, y: 16 };
+  const boxOf = (id: string) => ({ x: posOf(id).x, y: posOf(id).y, w: TOPO_W, h: TOPO_H });
 
-  // 同一对节点之间的多条边左右分开
-  const pairCount = new Map<string, number>();
-  const pairs = new Map<string, number>();
+  // 同一对节点之间的多条边沿法线左右分开
+  const pairTotal = new Map<string, number>();
   for (const l of topo.links) {
     const k = `${l.from}->${l.to}`;
-    pairCount.set(k, (pairCount.get(k) ?? 0) + 1);
+    pairTotal.set(k, (pairTotal.get(k) ?? 0) + 1);
   }
+  const pairSeen = new Map<string, number>();
+
   const linkLayer = svg("g");
-  const labelLayer = svg("g");
-  for (const l of topo.links) {
+  const badgeLayer = svg("g");
+  const edges: { g: SVGGElement; row: HTMLElement }[] = [];
+
+  topo.links.forEach((l, i) => {
     const k = `${l.from}->${l.to}`;
-    const total = pairCount.get(k) ?? 1;
-    const idx = pairs.get(k) ?? 0;
-    pairs.set(k, idx + 1);
-    const offset = total > 1 ? (idx - (total - 1) / 2) * 26 : 0;
-    const geo = linkGeometry(posOf(l.from), posOf(l.to), offset);
-    const color = LINK_COLORS[l.kind] ?? "#3d4759";
-    linkLayer.append(
+    const total = pairTotal.get(k) ?? 1;
+    const idx = pairSeen.get(k) ?? 0;
+    pairSeen.set(k, idx + 1);
+    const offset = total > 1 ? (idx - (total - 1) / 2) * 30 : 0;
+    const geo = linkGeometry(boxOf(l.from), boxOf(l.to), offset);
+    const color = `var(--k-${l.kind}, var(--edge-resolved))`;
+
+    const g = svg("g", { class: "topo-edge" });
+    g.append(
       svg("path", {
         d: geo.d,
         fill: "none",
         stroke: color,
-        "stroke-width": l.kind === "nccl" ? 2 : 1.4,
+        "stroke-width": l.kind === "nccl" ? 2 : 1.5,
         "stroke-dasharray": l.kind === "inproc" ? "4 3" : l.kind === "nccl" ? "7 4" : undefined,
         "marker-end": `url(#topo-${l.kind})`,
-        "data-from": l.from,
-        "data-to": l.to,
       }),
+      svg("path", { d: geo.d, fill: "none", stroke: "transparent", "stroke-width": 14 }),
+      svg("title", { text: `${nodeName(l.from)} → ${nodeName(l.to)}\n${l.label.replace(/\n/g, " ")}` }),
     );
-    const lines = l.label.split("\n");
-    const text = svg("text", { x: geo.mx, y: geo.my, "text-anchor": "middle", style: `fill:${color};font:10.5px var(--mono)` });
-    lines.forEach((line, i) => text.append(svg("tspan", { x: geo.mx, dy: i === 0 ? 0 : 11, text: line })));
-    labelLayer.append(text);
-  }
-  canvas.append(linkLayer, labelLayer);
+    linkLayer.append(g);
+
+    // 边上的徽标只放编号，完整文字在图下方的列表里
+    const badge = svg("g", { class: "topo-badge", transform: `translate(${geo.mx} ${geo.my})` },
+      svg("circle", { r: 9 }),
+      svg("text", { x: 0, y: 3.4, "text-anchor": "middle", text: String(i + 1) }),
+    );
+    badgeLayer.append(badge);
+
+    const row = el("div", { class: "topo-row", title: l.label.replace(/\n/g, " ") },
+      el("span", { class: "idx", text: String(i + 1) }),
+      el("span", {}, [
+        el("span", { class: "pair", text: `${nodeName(l.from)} → ${nodeName(l.to)}` }),
+        el("span", { class: "desc", text: `　${l.label.replace(/\n/g, " · ")}` }),
+      ]),
+    );
+    const on = () => {
+      g.classList.add("on");
+      row.classList.add("on");
+    };
+    const off = () => {
+      g.classList.remove("on");
+      row.classList.remove("on");
+    };
+    g.addEventListener("pointerenter", on);
+    g.addEventListener("pointerleave", off);
+    row.addEventListener("pointerenter", on);
+    row.addEventListener("pointerleave", off);
+    edges.push({ g, row });
+  });
+  canvas.append(linkLayer, badgeLayer);
 
   for (const n of topo.nodes) {
     const p = posOf(n.id);
-    const g = svg("g", { class: "node", "data-id": n.id, transform: `translate(${p.x} ${p.y})`, style: n.symbol ? "cursor:pointer" : "" });
-    const fill = n.kind === "external" ? "#1b2130" : n.kind === "component" ? "#141922" : "var(--bg-2)";
-    const stroke = n.kind === "process" ? "#3d4759" : n.kind === "component" ? "#2a3141" : "#4a5568";
+    const g = svg("g", {
+      class: `node topo-node ${n.kind}`,
+      "data-id": n.id,
+      transform: `translate(${p.x} ${p.y})`,
+      style: n.symbol ? "cursor:pointer" : "",
+    });
+    g.append(svg("rect", { class: "box topo-box", width: TOPO_W, height: TOPO_H }));
     g.append(
-      svg("rect", { class: "box", width: TOPO_W, height: TOPO_H, style: `fill:${fill};stroke:${stroke};stroke-dasharray:${n.kind === "external" ? "5 4" : n.kind === "component" ? "2 3" : "none"}` }),
+      svg("text", { class: "topo-title", x: 13, y: 26, text: NODE_TITLE[n.id] ?? n.label.replace(/\n/g, " ") }),
+      svg("text", { class: "topo-kind", x: 13, y: 46, text: KIND_LABEL[n.kind] ?? n.kind }),
+      // 有符号的节点加一个可点的记号，省掉一行说明文字
+      ...(n.symbol ? [svg("text", { class: "topo-bullet", x: TOPO_W - 13, y: 46, "text-anchor": "end", text: "点击查看 →" })] : []),
+      svg("title", { text: `${n.label.replace(/\n/g, " ")}\n${n.note}${n.symbol ? `\n符号：${n.symbol}` : ""}` }),
     );
-    const label = n.label.split("\n");
-    const t = svg("text", { x: 12, y: 20, style: "font-weight:600" });
-    label.forEach((line, i) => t.append(svg("tspan", { x: 12, dy: i === 0 ? 0 : 13, text: line })));
-    g.append(t, svg("text", { class: "sub", x: 12, y: TOPO_H - 10, text: truncateText(n.note, 26) }), svg("title", { text: `${n.label.replace(/\n/g, " ")}\n${n.note}${n.symbol ? `\n符号：${n.symbol}` : ""}` }));
     if (n.symbol) g.addEventListener("click", () => ctx.navigate(ctx.graphRoute(n.symbol!, 2)));
     canvas.append(g);
   }
+
   const legend = el("div", { class: "legend", style: "margin-top:8px" },
-    el("span", {}, [el("i", { style: "background:#6aa9ff" }), "HTTP / SSE"]),
-    el("span", {}, [el("i", { style: "background:#7ee0c0" }), "进程内调用"]),
-    el("span", {}, [el("i", { style: "background:#ffb454" }), "ZMQ ipc"]),
-    el("span", {}, [el("i", { style: "background:#c792ea" }), "NCCL 集合通信"]),
+    el("span", {}, [el("i", { style: "background:var(--k-http)" }), "HTTP / SSE"]),
+    el("span", {}, [el("i", { style: "background:var(--k-inproc)" }), "进程内调用"]),
+    el("span", {}, [el("i", { style: "background:var(--k-zmq)" }), "ZMQ ipc"]),
+    el("span", {}, [el("i", { style: "background:var(--k-nccl)" }), "NCCL 集合通信"]),
   );
-  return el("div", {}, canvas, legend);
+  const list = el("div", { class: "topo-list" }, edges.map((e) => e.row));
+  return el("div", {}, canvas, legend, list);
 }
 
-function linkGeometry(a: { x: number; y: number }, b: { x: number; y: number }, offset: number): { d: string; mx: number; my: number } {
-  const ca = { x: a.x + TOPO_W / 2, y: a.y + TOPO_H / 2 };
-  const cb = { x: b.x + TOPO_W / 2, y: b.y + TOPO_H / 2 };
+function nodeName(id: string): string {
+  return NODE_TITLE[id] ?? id;
+}
+
+function linkGeometry(
+  a: { x: number; y: number; w: number; h: number },
+  b: { x: number; y: number; w: number; h: number },
+  offset: number,
+): { d: string; mx: number; my: number } {
+  const ca = { x: a.x + a.w / 2, y: a.y + a.h / 2 };
+  const cb = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
   let dx = cb.x - ca.x;
   let dy = cb.y - ca.y;
   const len = Math.hypot(dx, dy) || 1;
   dx /= len;
   dy /= len;
-  const tx = dx === 0 ? Infinity : Math.abs(TOPO_W / 2 / dx);
-  const ty = dy === 0 ? Infinity : Math.abs(TOPO_H / 2 / dy);
+  const tx = dx === 0 ? Infinity : Math.abs(a.w / 2 / dx);
+  const ty = dy === 0 ? Infinity : Math.abs(a.h / 2 / dy);
   const s = Math.min(tx, ty);
   const px = -dy;
   const py = dx;
   const start = { x: ca.x + dx * s + px * offset, y: ca.y + dy * s + py * offset };
   const end = { x: cb.x - dx * s + px * offset, y: cb.y - dy * s + py * offset };
   const mid = { x: (start.x + end.x) / 2 + px * offset, y: (start.y + end.y) / 2 + py * offset };
-  return { d: `M ${start.x} ${start.y} Q ${mid.x} ${mid.y} ${end.x} ${end.y}`, mx: mid.x, my: mid.y - 4 };
+  return { d: `M ${start.x} ${start.y} Q ${mid.x} ${mid.y} ${end.x} ${end.y}`, mx: mid.x, my: mid.y };
 }
 
 function renderModules(
@@ -254,8 +310,4 @@ function renderModuleNotes(content: Content, ctx: ViewContext): HTMLElement {
     wrap.append(details);
   }
   return wrap;
-}
-
-function truncateText(s: string, n: number): string {
-  return s.length > n ? `${s.slice(0, n - 1)}…` : s;
 }

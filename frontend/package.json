@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "check:scenario": "esbuild src/lib/simulator.ts --bundle --format=esm --outfile=.tmp/simulator.mjs --log-level=error && node tools/check-scenario.mjs",
-    "check:views": "esbuild src/views/overview.ts src/views/callgraph.ts src/views/datastructs.ts src/views/sequence.ts src/views/simulator.ts src/views/source.ts --bundle --format=esm --outdir=.tmp/views --log-level=error && node tools/check-views.mjs"
+    "check:views": "esbuild src/views/overview.ts src/views/callgraph.ts src/views/datastructs.ts src/views/sequence.ts src/views/simulator.ts src/views/source.ts --bundle --format=esm --outdir=.tmp/views --log-level=error && node tools/check-views.mjs",
+    "check:contrast": "node tools/check-contrast.mjs"
   },
   "devDependencies": {
     "jsdom": "^29.1.1",

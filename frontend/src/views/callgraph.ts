@@ -118,10 +118,10 @@ async function renderCallgraph(ctx: ViewContext): Promise<void> {
     ),
     pathToResults,
     el("div", { class: "legend", style: "margin-top:8px" }, [
-      el("span", {}, [el("i", { style: "background:#6aa9ff" }), "节点左侧色条 = 所属模块"]),
-      el("span", {}, [el("i", { style: "background:#3d4759" }), "实线 = 静态解析的调用"]),
-      el("span", {}, [el("i", { style: "background:#ffb454" }), "虚线 = 类型推断的调用"]),
-      el("span", {}, [el("i", { style: "background:#c792ea" }), "紫虚线 = 接口实现对应（非调用）"]),
+      el("span", {}, [el("i", { style: "background:var(--accent)" }), "节点左侧色条 = 所属模块"]),
+      el("span", {}, [el("i", { style: "background:var(--edge-resolved)" }), "实线 = 静态解析的调用"]),
+      el("span", {}, [el("i", { style: "background:var(--edge-inferred)" }), "虚线 = 类型推断的调用"]),
+      el("span", {}, [el("i", { style: "background:var(--edge-override)" }), "紫虚线 = 接口实现对应（非调用）"]),
     ]),
     pathToResults2,
   );
@@ -442,9 +442,9 @@ async function renderCallgraph(ctx: ViewContext): Promise<void> {
     layer.append(
       svg("defs", {},
         svg("marker", { id: "arrow", viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "6", markerHeight: "6", orient: "auto-start-reverse" },
-          svg("path", { d: "M0,0 L10,5 L0,10 z", fill: "#3d4759" })),
+          svg("path", { d: "M0,0 L10,5 L0,10 z", style: "fill:var(--edge-resolved)" })),
         svg("marker", { id: "arrow-hl", viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "6", markerHeight: "6", orient: "auto-start-reverse" },
-          svg("path", { d: "M0,0 L10,5 L0,10 z", fill: "#7ee0c0" })),
+          svg("path", { d: "M0,0 L10,5 L0,10 z", style: "fill:var(--edge-hl)" })),
       ),
     );
     const nodeById = new Map(disp.nodes.map((n) => [n.id, n]));

@@ -35,7 +35,7 @@ cd frontend && npm run dev     # 打开 http://127.0.0.1:5173
 
 ## 六个视图
 
-**总览**：进程拓扑（API Server、tokenize worker、detokenizer、每个 TP rank 一个 Scheduler 进程，以及它们之间的 ZMQ 通道与 NCCL 链路）、按行数排的模块地图、六条建议阅读路径、每个模块的职责说明。
+**总览**：进程拓扑（API Server、tokenize worker、detokenizer、每个 TP rank 一个 Scheduler 进程，以及它们之间的 ZMQ 通道与 NCCL 链路）、按行数排的模块地图、六条建议阅读路径、每个模块的职责说明。拓扑图上的长文字都收进了图下方的编号列表：边上只留一个序号徽标，鼠标移到徽标或列表行上两边一起高亮，这样无论窗口多窄文字都不会叠在一起。
 
 **调用链追踪器**：主力视图。左栏选文件，中间是按调用深度分层的图，右栏是符号详情。点任意节点重新扎根，三种边分开画：实线是静态调用，虚线是「通过字段类型推断出来的调用」，紫色虚线是「抽象基类方法到实现类方法」——最后这种不是调用，是接口实现关系，它是能把 `BasePrefixCache.evict` 追到 `RadixPrefixCache.evict` 的唯一途径。还能选起点终点找最短调用路径。
 
@@ -77,9 +77,14 @@ cd frontend && npm run build
 # 模拟器：把预设脚本跑一遍，检查每一步的实际结果与脚本说明是否一致
 cd frontend && npm run check:scenario
 
+# 配色：检查主题的对比度是否够读（亮色主题最容易把浅字留在浅底上）
+cd frontend && npm run check:contrast
+
 # 六个视图：在 jsdom 里真实渲染并对主要交互做点击验证（需要后端在 8787 运行）
 cd frontend && npm run check:views
 ```
+
+`npm run check:views` 除了渲染六个视图，还会把进程拓扑的几何量出来自检：节点框、边徽标之间不得相交，节点文字不得超出框宽，断言结果会逐条打印。
 
 `cargo test --test golden` 是移植正确性的主要保障：它要求 624 个符号的 kind、name、qualname、module、group、file、lineno、end_lineno、loc、is_dataclass、is_property 全部一致，签名与返回类型文本一致，golden 里的调用边一条都不能丢。目前允许的差异只有几处，都在测试代码里写明了原因。
 
@@ -91,7 +96,9 @@ cd frontend && npm run check:views
 
 **模拟器是重写，不是录制。** 它按 `scheduler/cache.py` 与 `kvcache/radix_cache.py` 的逻辑实现，用于讲解；步数、页数都是按参数算出来的，不代表任何一次真实运行。
 
-**没有跑过浏览器交互测试。** 本机环境没有可用的浏览器后端（`agent.browsers.list()` 返回空），所以交互是用 jsdom 无头渲染加点击验证的，覆盖了「渲染是否报错、数据是否绑上、点击后状态是否变化」，但**排版、配色、动画这类视觉问题没有经过人眼或截图确认**。首次打开时请留意布局。
+**没有跑过浏览器交互测试。** 本机环境没有可用的浏览器后端（`agent.browsers.list()` 返回空），所以交互是用 jsdom 无头渲染加点击验证的，覆盖了「渲染是否报错、数据是否绑上、点击后状态是否变化」；文字叠加这类问题改成了几何自检（见上），配色改成了对比度自检，但**间距、对齐、动画这类纯视觉效果仍然没有经过人眼或截图确认**。首次打开时请留意布局。
+
+**主题是亮色。** 页面配色集中在 `styles.css` 的 `:root` 变量里，图元颜色（调用边、接口实现边、进程拓扑的四种通道、节点填充）也从同一批变量取，所以改主题只改这一处。`npm run check:contrast` 会按 WCAG 公式核对 34 组前景/背景的对比度。
 
 **`kernel/csrc/` 的 C/CUDA 清单用启发式扫描**（只有 Python 走真正的 AST），函数名可能多认或漏认，当前是 103 条。
 

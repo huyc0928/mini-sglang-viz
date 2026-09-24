@@ -61,12 +61,13 @@ export function debounce<T extends (...args: never[]) => void>(fn: T, ms: number
   }) as T;
 }
 
-/** 稳定的字符串哈希，用于给模块分配颜色 */
+/** 稳定的字符串哈希，用于给模块分配颜色。
+ *  亮度取 44%：在浅色底上做色条与文字都够深，在白底上做块填充也不刺眼。 */
 export function hashColor(key: string): string {
   let h = 0;
   for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) | 0;
   const hue = Math.abs(h) % 360;
-  return `hsl(${hue} 62% 58%)`;
+  return `hsl(${hue} 55% 44%)`;
 }
 
 /** 可拖拽平移与滚轮缩放的容器 */

@@ -225,7 +225,7 @@ async function renderSimulator(ctx: ViewContext): Promise<void> {
     gridBox.append(el("div", { class: "faint", style: "font-size:11.5px;margin:6px 0 3px", text: `${sim.maxRunningReq + 1} 行 × ${s.cols} token 位置。行号就是 table_idx，来自 TableManager.allocate（从槽位池末尾弹出，所以 uid1 拿到 r${sim.maxRunningReq - 1}）。` }));
     gridBox.append(el("div", { class: "legend", style: "margin-bottom:6px" },
       el("span", {}, [el("i", { style: "background:var(--bg-2)" }), "空位"]),
-      el("span", {}, [el("i", { style: "background:#6aa9ff" }), "本行请求占用的 KV 位置（颜色按请求区分）"]),
+      el("span", {}, [el("i", { style: "background:var(--accent)" }), "本行请求占用的 KV 位置（颜色按请求区分）"]),
       el("span", {}, [el("i", { style: "outline:2px solid var(--accent-2)" }), "本次操作刚写入"]),
     ));
 
@@ -247,7 +247,7 @@ async function renderSimulator(ctx: ViewContext): Promise<void> {
       if (free) cell.classList.add("free");
       else {
         const uid = usedPage.get(start);
-        cell.style.background = uid !== undefined ? hashColor(`uid${uid}`) : "#3d4657";
+        cell.style.background = uid !== undefined ? hashColor(`uid${uid}`) : "var(--neutral)";
       }
       if (hlPages.has(start)) cell.classList.add("hl");
       strip.append(cell);
@@ -286,7 +286,7 @@ async function renderSimulator(ctx: ViewContext): Promise<void> {
       if (!a || !b) continue;
       canvas.append(svg("path", {
         d: `M ${a.x + NODE_W} ${a.y + NODE_H / 2} C ${(a.x + NODE_W + b.x) / 2} ${a.y + NODE_H / 2}, ${(a.x + NODE_W + b.x) / 2} ${b.y + NODE_H / 2}, ${b.x} ${b.y + NODE_H / 2}`,
-        fill: "none", stroke: "#3d4759", "stroke-width": 1.4,
+        fill: "none", stroke: "var(--edge-resolved)", "stroke-width": 1.4,
       }));
     }
 

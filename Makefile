@@ -8,7 +8,7 @@ DATA ?= data
 DIST ?= frontend/dist
 PORT ?= 8787
 
-.PHONY: help all extract build serve dev test check check-scenario check-views check-all fmt clean
+.PHONY: help all extract build serve dev test check check-scenario check-views check-contrast check-all fmt clean
 
 default: help
 
@@ -35,17 +35,21 @@ test: ## 后端测试：golden 对等、内容引用
 check-scenario: ## 核对模拟器脚本与算法的每一步
 	cd frontend && npm run check:scenario
 
+check-contrast: ## 检查主题配色的对比度
+	cd frontend && npm run check:contrast
+
 check-views: ## 无头渲染六个视图并驱动主要交互（需要服务已在 $(PORT) 运行）
 	cd frontend && npm run check:views
 
-check: test check-scenario build ## 不依赖服务的全部检查
-	@echo "通过：后端测试、模拟器脚本、前端类型检查与构建"
+check: test check-scenario check-contrast build ## 不依赖服务的全部检查
+	@echo "通过：后端测试、模拟器脚本、配色对比度、前端类型检查与构建"
 
 check-all: ## 全部检查，自行起停服务
 	$(MAKE) extract
 	$(MAKE) build
 	$(MAKE) test
 	$(MAKE) check-scenario
+	$(MAKE) check-contrast
 	@cd backend && cargo run --release -- serve --data ../$(DATA) --dist ../$(DIST) --port $(PORT) & \
 	server_pid=$$!; \
 	trap "kill $$server_pid 2>/dev/null" EXIT; \

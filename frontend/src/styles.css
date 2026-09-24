@@ -1,19 +1,35 @@
 /* mini-sglang 源码可视化的样式。深色主题，代码用等宽字体。 */
 
 :root {
-  --bg: #10131a;
-  --bg-1: #161a23;
-  --bg-2: #1d2230;
-  --bg-3: #262d3d;
-  --fg: #e6e9f0;
-  --fg-dim: #9aa3b5;
-  --fg-faint: #6b7488;
-  --line: #2a3141;
-  --accent: #6aa9ff;
-  --accent-2: #7ee0c0;
-  --warn: #ffb454;
-  --danger: #ff7a7a;
-  --override: #c792ea;
+  color-scheme: light;
+  --bg: #f6f7fa;
+  --bg-1: #ffffff;
+  --bg-2: #f0f2f6;
+  --bg-3: #e3e8ef;
+  --fg: #1a2230;
+  --fg-dim: #4c5866;
+  --fg-faint: #78859a;
+  --line: #dce1e8;
+  --accent: #1f6feb;
+  --accent-2: #0e8a63;
+  --warn: #a86600;
+  --danger: #c0362c;
+  --override: #7a3fb0;
+
+  /* 图的配色。TS 侧通过 style="fill:var(--x)" 引用，保证图与图例永远一致。 */
+  --edge-resolved: #9aa7b8;
+  --edge-inferred: #a86600;
+  --edge-override: #7a3fb0;
+  --edge-hl: #0e8a63;
+  --k-http: #1f6feb;
+  --k-inproc: #0e8a63;
+  --k-zmq: #a86600;
+  --k-nccl: #7a3fb0;
+  --node-fill: #ffffff;
+  --node-stroke: #c8d1dd;
+  --node-fill-external: #f5f7fa;
+  --neutral: #9aa7b8;
+
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --sans: system-ui, -apple-system, "Segoe UI", "Noto Sans SC", sans-serif;
 }
@@ -236,7 +252,7 @@ button.btn:disabled {
 button.btn.primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #0d1524;
+  color: #ffffff;
   font-weight: 600;
 }
 
@@ -263,34 +279,34 @@ button.btn.primary {
 }
 
 .pill.class {
-  color: #ffd479;
-  border-color: #4d4326;
+  color: #7a5f00;
+  border-color: #e6dcc0;
 }
 .pill.function {
-  color: #8fd7ff;
-  border-color: #26404d;
+  color: #1a58c4;
+  border-color: #c9dcfb;
 }
 .pill.method {
-  color: #a5e8a5;
-  border-color: #2c452c;
+  color: #14682c;
+  border-color: #c6e8cd;
 }
 .pill.override {
-  color: var(--override);
-  border-color: #43325c;
+  color: #6b34a0;
+  border-color: #e0d2f2;
 }
 .pill.inferred {
-  color: var(--warn);
-  border-color: #4d3f22;
+  color: #8f5600;
+  border-color: #eddcbe;
 }
 .pill.resolved {
-  color: var(--accent-2);
-  border-color: #244a41;
+  color: #0a6b4d;
+  border-color: #c2e4d8;
 }
 .pill.external {
-  color: var(--fg-faint);
+  color: #5f6c80;
 }
 .pill.module-ref {
-  color: #b6a6ff;
+  color: #6b4fd8;
 }
 
 .mono {
@@ -475,7 +491,7 @@ table.grid tr:hover td {
 }
 
 .src .ln.hit {
-  background: #2b3a2b;
+  background: #e7f4ea;
   box-shadow: inset 2px 0 0 var(--accent-2);
 }
 
@@ -495,26 +511,28 @@ table.grid tr:hover td {
 }
 
 .tok-kw {
-  color: #ff9ecb;
+  color: #a626a4;
 }
 .tok-str {
-  color: #a5e8a5;
+  color: #1a7f37;
 }
 .tok-num {
-  color: #ffcf8b;
+  color: #a86600;
 }
 .tok-com {
-  color: var(--fg-faint);
+  /* 比 --fg-faint 深一档：注释虽弱化，仍要满足正文对比度 */
+  color: #5f6c80;
   font-style: italic;
 }
 .tok-def {
-  color: #8fd7ff;
+  color: #1f6feb;
 }
 .tok-builtin {
-  color: #7ee0c0;
+  /* 比 --accent-2 深一档：代码底是纯白，小字号需要 4.5 以上 */
+  color: #0d6f57;
 }
 .tok-dec {
-  color: #ffd479;
+  color: #8a6d00;
 }
 
 /* 图 */
@@ -552,12 +570,13 @@ table.grid tr:hover td {
 
 .edge {
   fill: none;
-  stroke: #3d4759;
+  stroke: var(--edge-resolved);
   stroke-width: 1.2;
   marker-end: url(#arrow);
 }
 
 .edge.inferred {
+  stroke: var(--edge-inferred);
   stroke-dasharray: 5 4;
 }
 
@@ -594,13 +613,13 @@ table.grid tr:hover td {
 }
 
 .seq-msg line {
-  stroke: #556074;
+  stroke: #8b97a8;
   stroke-width: 1.4;
   marker-end: url(#arrow);
 }
 
 .seq-msg.done line {
-  stroke: #45505f;
+  stroke: #b3bcc9;
 }
 
 .seq-msg.cur line {
@@ -633,7 +652,7 @@ table.grid tr:hover td {
 }
 
 .seq-msg.cur .badge-num {
-  fill: #0d1524;
+  fill: #ffffff;
   font-weight: 700;
 }
 
@@ -648,12 +667,12 @@ table.grid tr:hover td {
   height: 15px;
   border-radius: 3px;
   background: var(--bg-2);
-  border: 1px solid #222836;
+  border: 1px solid #cfd7e2;
 }
 
 .cell.free {
-  background: #1b2130;
-  border-color: #2b3346;
+  background: #f2f4f8;
+  border-color: #d5dce6;
 }
 
 .cell.used {
@@ -662,7 +681,7 @@ table.grid tr:hover td {
 
 .cell.empty {
   background: transparent;
-  border: 1px dashed #232a38;
+  border: 1px dashed #e3e8ef;
 }
 
 .cell.hl {
@@ -733,7 +752,7 @@ table.grid tr:hover td {
 .timeline button.cur {
   background: var(--accent);
   border-color: var(--accent);
-  color: #0d1524;
+  color: #ffffff;
   font-weight: 700;
 }
 
@@ -747,8 +766,8 @@ table.grid tr:hover td {
 .error-box {
   border: 1px solid var(--danger);
   border-radius: 8px;
-  background: #2a1c1f;
-  color: #ffd7d7;
+  background: #fdecea;
+  color: #8a1f16;
   padding: 12px 14px;
   font-size: 13px;
 }
@@ -769,9 +788,122 @@ table.grid tr:hover td {
   height: 10px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #2c3444;
+  background: #c8d1dd;
   border-radius: 6px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
+}
+
+
+/* ---- 总览的进程拓扑 ---- */
+
+/* 节点框按类型区分，颜色交给主题变量，避免在 JS 里写死 */
+.topo-box {
+  fill: var(--bg-1);
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.topo-node.external .topo-box {
+  fill: var(--bg-2);
+  stroke-dasharray: 5 4;
+}
+
+.topo-node.component .topo-box {
+  stroke-dasharray: 2 3;
+}
+
+.topo-node.process .topo-box {
+  stroke-width: 1.4;
+}
+
+.topo-node:hover .topo-box {
+  stroke: var(--accent);
+}
+
+.topo-node .topo-title {
+  fill: var(--fg);
+  font: 600 12px var(--sans);
+}
+
+.topo-node .topo-kind {
+  fill: var(--fg-faint);
+  font: 10px var(--mono);
+}
+
+.topo-node .topo-bullet {
+  fill: var(--fg-faint);
+}
+
+/* 边上的序号徽标 */
+.topo-badge circle {
+  fill: var(--bg-1);
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.topo-edge:hover .topo-badge circle,
+.topo-edge.on .topo-badge circle {
+  fill: var(--accent);
+  stroke: var(--accent);
+}
+
+.topo-badge text {
+  fill: var(--fg-dim);
+  font: 600 9.5px var(--mono);
+}
+
+.topo-edge.on .topo-badge text,
+.topo-edge:hover .topo-badge text {
+  fill: #ffffff;
+}
+
+.topo-edge.on path {
+  stroke-width: 2.6;
+}
+
+.topo-edge.dim path,
+.topo-edge.dim .topo-badge {
+  opacity: 0.25;
+}
+
+/* 每条边的完整说明放在图下方的列表里 */
+.topo-list {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.topo-row {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 8px;
+  align-items: baseline;
+  padding: 3px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12.5px;
+}
+
+.topo-row:hover,
+.topo-row.on {
+  background: var(--bg-2);
+}
+
+.topo-row .idx {
+  font: 600 11px var(--mono);
+  color: var(--fg-faint);
+  text-align: right;
+}
+
+.topo-row .pair {
+  color: var(--fg);
+}
+
+.topo-row .desc {
+  color: var(--fg-dim);
+  font-family: var(--mono);
+  font-size: 11.5px;
 }

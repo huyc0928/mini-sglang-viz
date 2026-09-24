@@ -255,8 +255,8 @@ function renderOwnership(d: DataStructOut, byShort: Map<string, string>, onSelec
   const canvas = svg("svg", { viewBox: `0 0 ${W} ${H}`, style: "width:100%;height:auto;background:var(--bg-1);border:1px solid var(--line);border-radius:10px" });
   canvas.append(
     svg("defs", {},
-      svg("marker", { id: "own-arrow", viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "6", markerHeight: "6", orient: "auto-start-reverse" }, svg("path", { d: "M0,0 L10,5 L0,10 z", fill: "#3d4759" })),
-      svg("marker", { id: "own-arrow-i", viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "6", markerHeight: "6", orient: "auto-start-reverse" }, svg("path", { d: "M0,0 L10,5 L0,10 z", fill: "#c792ea" })),
+      svg("marker", { id: "own-arrow", viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "6", markerHeight: "6", orient: "auto-start-reverse" }, svg("path", { d: "M0,0 L10,5 L0,10 z", style: "fill:var(--edge-resolved)" })),
+      svg("marker", { id: "own-arrow-i", viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "6", markerHeight: "6", orient: "auto-start-reverse" }, svg("path", { d: "M0,0 L10,5 L0,10 z", style: "fill:var(--edge-override)" })),
     ),
   );
   const posOf = new Map<string, { x: number; y: number }>();
@@ -272,7 +272,7 @@ function renderOwnership(d: DataStructOut, byShort: Map<string, string>, onSelec
     const path = svg("path", {
       d: `M ${cx} ${cy} Q ${(cx + p.x) / 2 + 20} ${(cy + p.y) / 2 - 20} ${p.x} ${p.y}`,
       fill: "none",
-      stroke: solid ? "#3d4759" : "#c792ea",
+      stroke: solid ? "var(--edge-resolved)" : "var(--edge-override)",
       "stroke-width": solid ? 1.4 : 1.6,
       "stroke-dasharray": solid ? undefined : "4 3",
       "marker-end": solid ? "url(#own-arrow)" : "url(#own-arrow-i)",
@@ -299,8 +299,8 @@ function renderOwnership(d: DataStructOut, byShort: Map<string, string>, onSelec
   return el("div", {},
     canvas,
     el("div", { class: "legend", style: "margin-top:6px" },
-      el("span", {}, [el("i", { style: "background:#3d4759" }), "实线：持有该类型的字段"]),
-      el("span", {}, [el("i", { style: "background:#c792ea" }), "紫虚线：继承（inherits-from）"]),
+      el("span", {}, [el("i", { style: "background:var(--edge-resolved)" }), "实线：持有该类型的字段"]),
+      el("span", {}, [el("i", { style: "background:var(--edge-override)" }), "紫虚线：继承（inherits-from）"]),
     ),
   );
 }
