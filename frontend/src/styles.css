@@ -446,6 +446,21 @@ button.btn.primary {
   text-overflow: ellipsis;
 }
 
+.desc {
+  color: var(--fg-dim);
+  font-size: 12.5px;
+}
+
+.item .desc {
+  margin-top: 2px;
+}
+
+/* 图节点上的描述行：比名字淡一档但仍要可读 */
+.node text.desc {
+  fill: var(--fg-dim);
+  font-size: 10px;
+}
+
 .item .where {
   font-family: var(--mono);
   font-size: 11px;

@@ -2,6 +2,7 @@
 
 import { api } from "../api";
 import { clear, el, svg } from "../lib/dom";
+import { describe, loadDescriptions } from "../lib/desc";
 import { focusInto, sourceBlock } from "../lib/hl";
 import { mountHead } from "../lib/view";
 import type { Content, Flow, SymbolDetail } from "../types";
@@ -33,6 +34,7 @@ async function renderSequence(ctx: ViewContext): Promise<void> {
   const { root } = ctx;
   mountHead(root, "时序回放", "选择一条流程，用「下一步」逐步走。每一步都对应源码里的一处调用，右侧给出该符号的真实代码。");
 
+  await loadDescriptions();
   const content: Content = await api.content();
   const flows = content.flows;
   let flow: Flow = flows.find((f) => f.id === ctx.params.get("flow")) ?? flows[0];
@@ -193,7 +195,12 @@ async function renderSequence(ctx: ViewContext): Promise<void> {
     if (s.detail) badge.append(el("p", { text: s.detail }));
     if (s.hint) badge.append(el("p", { class: "faint mono", style: "font-size:12px", text: s.hint }));
     if (s.symbol) {
-      badge.append(el("div", { class: "row tight" }, el("span", { class: "pill resolved", text: s.symbol })));
+      badge.append(
+        el("div", { class: "row tight" },
+          el("span", { class: "pill resolved", text: s.symbol.split("minisgl.")[1] ?? s.symbol }),
+          describe(s.symbol) ? el("span", { class: "desc", text: describe(s.symbol) }) : null,
+        ),
+      );
     }
     stepBox.append(badge);
 

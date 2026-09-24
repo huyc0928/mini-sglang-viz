@@ -100,6 +100,41 @@ fn content_references_exist() {
         }
     }
 
+    // ---- 功能描述：每条都要对得上符号、长度合适 ----
+    let desc_path = manifest().join("../content/descriptions.json");
+    let desc = load(&desc_path);
+    let desc_map = desc.as_object().expect("descriptions.json 应是对象");
+    assert!(desc_map.len() > 400, "描述条目偏少：{}", desc_map.len());
+    let mut bad_id: Vec<&String> = Vec::new();
+    let mut bad_len: Vec<(&String, usize)> = Vec::new();
+    let mut empty: Vec<&String> = Vec::new();
+    for (id, v) in desc_map {
+        if !symbols.contains(id) {
+            bad_id.push(id);
+        }
+        let text = v.as_str().unwrap_or("");
+        // 图上的第二行要放得下，所以只数汉字
+        let n = text.chars().filter(|c| ('\u{4e00}'..='\u{9fff}').contains(c)).count();
+        if text.is_empty() {
+            empty.push(id);
+        } else if !(4..=15).contains(&n) {
+            bad_len.push((id, n));
+        }
+    }
+    assert!(bad_id.is_empty(), "描述里有不存在的符号 id：{:?}", &bad_id[..bad_id.len().min(5)]);
+    assert!(empty.is_empty(), "有描述是空的：{:?}", &empty[..empty.len().min(5)]);
+    assert!(bad_len.is_empty(), "描述汉字数超出 4–15：{:?}", &bad_len[..bad_len.len().min(5)]);
+
+    // 非魔术方法必须都有描述，否则图上会退回到显示类型与模块
+    let uncovered: Vec<&String> = symbols
+        .iter()
+        .filter(|id| {
+            let name = id.rsplit('.').next().unwrap_or("");
+            !(name.starts_with("__") && name.ends_with("__")) && !desc_map.contains_key(*id)
+        })
+        .collect();
+    assert!(uncovered.is_empty(), "有 {} 个非魔术符号没有描述：{:?}", uncovered.len(), &uncovered[..uncovered.len().min(5)]);
+
     let ops = content["kv_scenario"]["ops"].as_array().expect("kv_scenario.ops");
     assert!(ops.len() >= 15, "模拟器脚本步骤偏少：{}", ops.len());
     let topo = content["process_topology"]["nodes"].as_array().expect("topology");
@@ -108,10 +143,11 @@ fn content_references_exist() {
     assert!(order.len() >= 5, "建议阅读顺序条目偏少：{}", order.len());
 
     eprintln!(
-        "内容检查通过：{} 模块说明，{} 条时序 / {} 步，{} 个模拟器步骤",
+        "内容检查通过：{} 模块说明，{} 条时序 / {} 步，{} 个模拟器步骤，{} 条功能描述",
         modules,
         flows.len(),
         flows.iter().map(|f| f["steps"].as_array().unwrap().len()).sum::<usize>(),
-        ops.len()
+        ops.len(),
+        desc_map.len()
     );
 }

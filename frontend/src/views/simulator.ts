@@ -45,7 +45,7 @@ async function renderSimulator(ctx: ViewContext): Promise<void> {
   mountHead(
     root,
     "KV / Radix 模拟器",
-    "这是按源码重写的教学模拟，不是一次真实运行的抓取。它只保留 CacheManager、TableManager、RadixPrefixCache 里与页分配、页表、前缀匹配和淘汰有关的状态。",
+    "这是按源码重写的教学模拟：步数与页数按参数算出，用来对照算法。它只保留 CacheManager、TableManager、RadixPrefixCache 里与页分配、页表、前缀匹配和淘汰有关的状态。",
   );
 
   const content = await api.content();
@@ -87,7 +87,7 @@ async function renderSimulator(ctx: ViewContext): Promise<void> {
   root.append(
     el("div", { class: "stepbox" },
       el("h4", { text: "这不是真实运行的录像" }),
-      el("p", { style: "margin:0", text: "下面是按 mini-sglang 源码重写的模拟：page_size 与 num_pages 可调，free_slots、页表、Radix 树的语义都按实现来。真实代码里被省略的部分（模型前向、attention 元数据、张量搬运）不在这里体现。" }),
+      el("p", { style: "margin:0", text: "下面是按 mini-sglang 源码重写的模拟：page_size 与 num_pages 可调，free_slots、页表、Radix 树的语义都按实现来。模型前向、attention 元数据、张量搬运这些与页管理无关的部分没有搬进来。" }),
     ),
     el("div", { class: "row", style: "margin:12px 0" },
       el("span", { class: "faint", text: "page_size" }), pageSel,

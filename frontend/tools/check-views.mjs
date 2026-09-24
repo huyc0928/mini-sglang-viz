@@ -225,6 +225,19 @@ async function testCallgraph() {
   // 未解析调用应当被标注，而不是伪装成调用
   check(/未解析|unresolved/.test(text(root)), "调用链：列出了未解析调用");
 
+  // 每个节点第二行应当是功能描述，退回显示「类型 · 模块」说明描述表没接上
+  const descs = [...root.querySelectorAll("g.node text.desc")].map((t) => t.textContent ?? "");
+  const real = descs.filter((d) => d.trim() !== "" && !/ · /.test(d));
+  check(descs.length >= 5, `调用链：${descs.length} 个节点有第二行`);
+  check(real.length >= Math.ceil(descs.length * 0.9),
+    `调用链：${real.length}/${descs.length} 个节点的第二行是功能描述`);
+  notes.push(`  数据  调用链：${real.length}/${descs.length} 个节点显示功能描述，例：${real.slice(0, 3).join(" / ")}`);
+
+  // 调用与被调用列表也要带上描述
+  const items = [...root.querySelectorAll(".item .desc")].map((d) => d.textContent ?? "");
+  check(items.length >= 3, `调用链：调用/被调用列表里有 ${items.length} 条功能描述`);
+  notes.push(`  数据  调用链：列表里的描述，例：${items.slice(0, 3).join(" / ")}`);
+
   // 图要铺满面板：画布的视口单位应与面板像素 1:1，缩放倍数不应被压到很小
   await withPaneSize(830, 460, async () => {
     const { root: r } = await renderView(callgraphView, { symbol: "minisgl.scheduler.scheduler.Scheduler.overlap_loop", depth: "2" });

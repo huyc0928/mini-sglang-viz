@@ -64,6 +64,7 @@ export const api = {
   modules: () => get<ModuleOut[]>("/modules"),
   files: () => get<Record<string, FileMeta>>("/files"),
   content: () => get<Content>("/content"),
+  descriptions: () => get<Record<string, string>>("/descriptions"),
   kernels: () => get<{ csrc: KernelItem[]; triton: KernelItem[] }>("/kernels"),
   datastructs: () => get<DataStructOut[]>("/datastructs"),
   datastruct: (id: string) => get<DataStructOut>("/datastruct", { id }),

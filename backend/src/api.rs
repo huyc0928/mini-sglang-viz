@@ -108,6 +108,10 @@ async fn content(State(s): State<Shared>) -> Json<serde_json::Value> {
     Json(s.content.clone())
 }
 
+async fn descriptions(State(s): State<Shared>) -> Json<serde_json::Value> {
+    Json(json!(s.descriptions))
+}
+
 async fn kernels(State(s): State<Shared>) -> Json<serde_json::Value> {
     Json(s.kernels.clone())
 }
@@ -241,6 +245,7 @@ pub fn serve(data: PathBuf, dist: Option<PathBuf>, port: u16) -> Result<()> {
         .route("/api/modules", get(modules))
         .route("/api/files", get(files))
         .route("/api/content", get(content))
+        .route("/api/descriptions", get(descriptions))
         .route("/api/kernels", get(kernels))
         .route("/api/datastructs", get(datastructs))
         .route("/api/datastruct", get(datastruct))

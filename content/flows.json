@@ -13,7 +13,7 @@
    "notes": [
     "Req 用三个长度字段描述一条请求走到哪一步：cached_len（已进缓存的 token 数）、device_len（当前要算到的位置）、max_device_len（输入长度加最大输出）。",
     "Batch 只带 reqs 和 phase，其余字段由调度器与 attention 后端填充，这样模型层不需要知道调度细节。",
-    "Context 里的 page_table 注释写明「始终按 page_size = 1 存储」——表里放的是 token 级 KV 位置，不是页号。"
+    "Context 里的 page_table 注释写明「始终按 page_size = 1 存储」——表里放的是 token 级的 KV 位置。"
    ]
   },
   "env": {
@@ -249,7 +249,7 @@
     "minisgl.utils.misc.div_even"
    ],
    "notes": [
-    "div_even 在切不动时对 KV 头做复制而不是报错，这是 GQA 配 tp 的常见处理方式。"
+    "div_even 在切不动时对 KV 头做复制，这是 GQA 配 tp 的常见处理方式。"
    ]
   },
   "benchmark": {
@@ -811,7 +811,7 @@
      "from": "CacheManager",
      "to": "CacheManager",
      "label": "把位置散射进页表对应行",
-     "detail": "表里存的是 KV 位置而不是页号，这是本实现的取巧之处。",
+     "detail": "表里存的是 KV 位置，这是本实现的取巧之处。",
      "symbol": "minisgl.scheduler.cache._write_page_table"
     },
     {
@@ -1028,7 +1028,7 @@
      "from": "PrefillAdder",
      "to": "ChunkedReq",
      "label": "chunk_size = min(预算, 剩余长度)",
-     "detail": "chunk_size 小于剩余长度，于是用 ChunkedReq 而不是 Req。",
+     "detail": "chunk_size 小于剩余长度，于是用 ChunkedReq。",
      "symbol": "minisgl.scheduler.prefill.PrefillAdder._add_one_req"
     },
     {
@@ -1050,7 +1050,7 @@
      "from": "PrefillAdder",
      "to": "PrefillAdder",
      "label": "待切块请求挪到队头",
-     "detail": "保证下一轮优先继续推进它，而不是被新请求插队。",
+     "detail": "把切块的请求挪到队头，下一轮优先继续推进它。",
      "symbol": "minisgl.scheduler.prefill.PrefillManager.schedule_next_batch"
     },
     {
@@ -1409,7 +1409,7 @@
    },
    {
     "op": "evict",
-    "text": "r3 重试需要 6 页而空闲只有 2 页，触发淘汰：缺 4 页即 16 个 token。可淘汰的叶子只有那个 8 token 的子节点，淘汰它只有 2 页，不够；父节点这时变成叶子且没人引用，于是接着被淘汰。两轮共淘汰 24 个 token，也就是 6 页 —— 比需要的多淘汰了 2 页，因为淘汰以节点为粒度，不能只削一半。",
+    "text": "r3 重试需要 6 页而空闲只有 2 页，触发淘汰：缺 4 页即 16 个 token。可淘汰的叶子只有那个 8 token 的子节点，淘汰它只有 2 页，不够；父节点这时变成叶子且没人引用，于是接着被淘汰。两轮共淘汰 24 个 token，也就是 6 页；比需要的多淘汰了 2 页，因为淘汰时要连整个节点一起淘汰，不能只削一半。",
     "symbol": "minisgl.kvcache.radix_cache.RadixPrefixCache.evict",
     "hint": "弹出父节点后要重新判断它是否变成可淘汰叶子",
     "need_pages": 6

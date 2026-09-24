@@ -1,6 +1,7 @@
 // 数据结构检查器：字段、实例属性、不变式与归属关系。
 
 import { api } from "../api";
+import { describe, loadDescriptions } from "../lib/desc";
 import { clear, el, svg } from "../lib/dom";
 import { sourceBlock } from "../lib/hl";
 import { mountHead } from "../lib/view";
@@ -58,6 +59,7 @@ async function renderDatastructs(ctx: ViewContext): Promise<void> {
   root.classList.add("split");
   root.style.gridTemplateColumns = "320px 1fr";
 
+  await loadDescriptions();
   const all = await api.datastructs();
   const byId = new Map(all.map((d) => [d.id, d]));
   const byShort = new Map(all.map((d) => [d.name, d.id]));
@@ -101,6 +103,7 @@ async function renderDatastructs(ctx: ViewContext): Promise<void> {
             "div",
             { class: `item${d.id === selectedId ? " active" : ""}`, onclick: () => select(d.id) },
             el("div", { class: "name" }, [d.name, " ", el("span", { class: "pill", text: KIND_LABEL[d.kind] ?? d.kind })]),
+            describe(d.id) ? el("div", { class: "desc", text: describe(d.id) }) : null,
             el("div", { class: "where", text: `${d.file}:${d.lineno}` }),
           ),
         );
@@ -138,6 +141,9 @@ async function renderDatastructs(ctx: ViewContext): Promise<void> {
         el("span", { style: "cursor:pointer;text-decoration:underline", text: `${d.file}:${d.lineno}`, onclick: () => ctx.navigate(ctx.sourceRoute(d.file, d.lineno)) }),
       ]),
     );
+    if (describe(d.id)) {
+      right.append(el("p", { class: "desc", style: "margin:0 0 8px;font-size:13px", text: describe(d.id) }));
+    }
     if (d.bases.length) right.append(el("div", { class: "dim", style: "font-size:12.5px", text: `继承自：${d.bases.join(", ")}` }));
     if (d.docstring) right.append(el("p", { class: "dim", style: "font-size:12.5px;white-space:pre-wrap", text: d.docstring }));
 

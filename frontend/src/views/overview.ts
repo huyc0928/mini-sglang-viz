@@ -50,7 +50,7 @@ export const overviewView: View = {
 
 async function renderOverview(ctx: ViewContext): Promise<void> {
   const { root } = ctx;
-  mountHead(root, "总览", "数字来自对 mini-sglang 源码的静态抽取；「推断」类数字由类型信息或调用链间接得出，不是逐行实测。");
+  mountHead(root, "总览", "数字来自对 mini-sglang 源码的静态抽取。带「推断」标记的数字由类型信息或调用链间接得出，界面上与实测数字分开标注。");
 
   const [ov, content] = await Promise.all([api.overview(), api.content()]);
   renderStats(root, ov.stats);

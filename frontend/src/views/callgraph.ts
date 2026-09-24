@@ -1,6 +1,7 @@
 // 调用链追踪器：文件树 + 分层调用图 + 符号详情，支持重定根、找路径。
 
 import { api } from "../api";
+import { describe, loadDescriptions, trimDesc } from "../lib/desc";
 import { clear, el, hashColor, makePanZoom, svg } from "../lib/dom";
 import { boundsOf, byGroupThenName, layerLayout } from "../lib/layout";
 import type { Pt } from "../lib/layout";
@@ -65,7 +66,7 @@ async function renderCallgraph(ctx: ViewContext): Promise<void> {
   const head = mountHead(
     root,
     "调用链追踪器",
-    "中间是调用图：点击节点即可把它设为新的根；实线是静态解析到的调用，虚线是经字段类型推断出的调用，紫色虚线是「接口方法 → 具体实现」的对应关系，不是一次调用。",
+    "中间是调用图：点击节点即可把它设为新的根。实线是静态解析到的调用，虚线是经字段类型推断出的调用，紫色虚线表示接口方法与具体实现的对应关系。",
   );
   root.classList.add("split");
 
@@ -132,6 +133,7 @@ async function renderCallgraph(ctx: ViewContext): Promise<void> {
   let groupFilter = ctx.params.get("group") ?? "";
   let fileQuery = "";
 
+  await loadDescriptions();
   const filesMap = await api.files();
   const byGroup = new Map<string, FileMeta[]>();
   for (const meta of Object.values(filesMap)) {
@@ -348,6 +350,9 @@ async function renderCallgraph(ctx: ViewContext): Promise<void> {
             " ",
             el("span", { class: `pill ${n.confidence}`, text: confLabel(n.confidence) }),
           ]),
+          describe(n.id)
+            ? el("div", { class: "desc", text: describe(n.id) })
+            : null,
           el("div", { class: "where", text: `${n.file}:${n.lineno}${n.count > 1 ? ` · ${n.count} 次` : ""}` }),
         ),
       );
@@ -375,6 +380,9 @@ async function renderCallgraph(ctx: ViewContext): Promise<void> {
         }),
       ]),
     );
+    if (describe(s.id)) {
+      detailBox.append(el("p", { class: "desc", style: "margin:0 0 8px;font-size:13px", text: describe(s.id) }));
+    }
     if (s.signature) detailBox.append(el("pre", { class: "code", style: "max-height:150px;margin-bottom:8px", text: s.signature }));
     if (s.bases?.length) {
       detailBox.append(el("div", { class: "dim", style: "font-size:12.5px", text: `基类：${s.bases.join(", ")}` }));
@@ -508,7 +516,7 @@ async function renderCallgraph(ctx: ViewContext): Promise<void> {
         el("span", {}, [el("i", { style: "background:var(--accent)" }), "左侧色条 = 所属模块"]),
         el("span", {}, [el("i", { style: "background:var(--edge-resolved)" }), "实线 = 静态调用"]),
         el("span", {}, [el("i", { style: "background:var(--edge-inferred)" }), "虚线 = 类型推断"]),
-        el("span", {}, [el("i", { style: "background:var(--edge-override)" }), "紫虚线 = 接口实现（非调用）"]),
+        el("span", {}, [el("i", { style: "background:var(--edge-override)" }), "紫虚线 = 接口实现"]),
       ]),
     );
     if (disp.nodes.length === 0) {
@@ -572,8 +580,14 @@ async function renderCallgraph(ctx: ViewContext): Promise<void> {
         svg("rect", { class: "box", width: NODE_W, height: NODE_H }),
         svg("rect", { x: 0, y: 0, width: 4, height: NODE_H, rx: 2, style: `fill:${hashColor(n.group)}` }),
         svg("text", { x: 11, y: 17, text: truncate(n.name, 18) }),
-        svg("text", { class: "sub", x: 11, y: 32, text: `${n.kind} · ${n.group}` }),
-        svg("title", { text: `${n.id}\n${n.file}:${n.lineno}` }),
+        // 第二行放功能描述；没有描述时退回类型与模块
+        svg("text", {
+          class: "sub desc",
+          x: 11,
+          y: 32,
+          text: trimDesc(describe(n.id), 13) || `${n.kind} · ${n.group}`,
+        }),
+        svg("title", { text: `${n.id}\n${describe(n.id) || `${n.kind} · ${n.group}`}\n${n.file}:${n.lineno}` }),
       );
       layer.append(g);
     }

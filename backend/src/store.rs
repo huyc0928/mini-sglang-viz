@@ -76,6 +76,8 @@ pub struct SourceLine {
 pub struct Store {
     pub out: ExtractOutput,
     pub content: serde_json::Value,
+    /// 符号 id -> 一句话功能描述，手工整理，供图上与调用列表显示
+    pub descriptions: BTreeMap<String, String>,
     /// 被调用者 -> 调用者列表
     reverse: HashMap<String, Vec<String>>,
     /// 抽象基类方法 -> 实现类方法
@@ -93,6 +95,17 @@ impl Store {
         } else {
             serde_json::json!({ "csrc": [], "triton": [] })
         };
+        // 描述紧挨着手工内容存放；缺文件时留空表，视图会退回显示类型与模块
+        let desc_path = content_path
+            .parent()
+            .map(|d| d.join("descriptions.json"))
+            .unwrap_or_else(|| PathBuf::from("descriptions.json"));
+        let descriptions: BTreeMap<String, String> = if desc_path.exists() {
+            serde_json::from_str(&std::fs::read_to_string(&desc_path)?)
+                .with_context(|| format!("解析 {}", desc_path.display()))?
+        } else {
+            BTreeMap::new()
+        };
         let content = if content_path.exists() {
             serde_json::from_str(
                 &std::fs::read_to_string(content_path)
@@ -109,6 +122,7 @@ impl Store {
         Ok(Self {
             out,
             content,
+            descriptions,
             reverse,
             overrides,
             kernels,
